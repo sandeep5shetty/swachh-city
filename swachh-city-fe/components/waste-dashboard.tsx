@@ -3,6 +3,7 @@
 import {
   Bell,
   ChartNoAxesCombined,
+  Check,
   CircleAlert,
   ExternalLink,
   Hand,
@@ -15,8 +16,9 @@ import {
   Upload,
   User,
   Users,
+  Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Map as UiMap,
@@ -28,14 +30,47 @@ import {
   type MapViewport,
 } from "@/components/ui/map";
 import Image from "next/image";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
-type NavKey = "dashboard" | "live-map" | "fleet" | "reports" | "analytics";
+type NavKey =
+  | "dashboard"
+  | "live-map"
+  | "fleet"
+  | "reports"
+  | "analytics"
+  | "driver";
 type MapMode = "live" | "heatmap";
 type BinState = "green" | "yellow" | "red";
 type Severity = "low" | "medium" | "high";
 type ReportStatus = "pending" | "in-progress" | "resolved";
 type AuthRole = "citizen" | "admin";
 type AuthMode = "citizen-login" | "citizen-register" | "admin-login";
+type TaskStatus = "pending" | "in-progress" | "completed";
+type TaskPriority = "high" | "medium";
+
+type DriverNotification = {
+  id: string;
+  message: string;
+  timestamp: string;
+  priority: TaskPriority;
+  read: boolean;
+};
+
+type DriverTask = {
+  id: string;
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  source: "bin" | "complaint";
+  locationLabel: string;
+  location: GeoPoint;
+  assignedTruckId: string | null;
+  distanceKm: number | null;
+  createdAt: number;
+};
 
 type TwinBin = {
   id: string;
@@ -197,6 +232,7 @@ const navItems: Array<{
 }> = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "live-map", label: "Live Map", icon: MapIcon },
+  { key: "driver", label: "Driver Ops", icon: Zap },
   { key: "fleet", label: "Fleet Management", icon: Truck },
   { key: "reports", label: "Citizen Reports", icon: ShieldAlert },
   { key: "analytics", label: "Analytics", icon: ChartNoAxesCombined },
@@ -239,6 +275,16 @@ function toCloudinaryPreview(url: string, width = 320, height = 200) {
   );
 }
 
+function toDistanceKm(a: GeoPoint, b: GeoPoint) {
+  const latKm = (a.latitude - b.latitude) * 111;
+  const lngKm = (a.longitude - b.longitude) * 111;
+  return Math.sqrt(latKm * latKm + lngKm * lngKm);
+}
+
+function makeId(prefix: string) {
+  return `${prefix}-${Math.floor(Date.now() + Math.random() * 10000)}`;
+}
+
 export function WasteDashboard() {
   const [authReady, setAuthReady] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -276,6 +322,14 @@ export function WasteDashboard() {
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [isImageUploading, setIsImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+
+  const [notifications, setNotifications] = useState<DriverNotification[]>([]);
+  const [toastQueue, setToastQueue] = useState<DriverNotification[]>([]);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [driverTasks, setDriverTasks] = useState<DriverTask[]>([]);
+
+  const alertedBinsRef = useRef<Set<string>>(new Set());
+  const notifiedComplaintsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const token = window.localStorage.getItem("swachh_auth_token");
@@ -619,6 +673,36 @@ export function WasteDashboard() {
     return () => window.clearInterval(timer);
   }, [authReady, authToken, authRole, simulationActive, loadOperationalData]);
 
+  useEffect(() => {
+    if (!simulationActive || !geoBins.length) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setBins((prev) =>
+        prev.map((bin) => {
+          const delta = Math.random() > 0.65 ? 4 : 1.5;
+          const fill = Math.min(100, Math.round((bin.fill + delta) * 10) / 10);
+          return { ...bin, fill };
+        }),
+      );
+    }, 6000);
+
+    return () => window.clearInterval(timer);
+  }, [simulationActive, geoBins.length]);
+
+  useEffect(() => {
+    if (!toastQueue.length) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setToastQueue((prev) => prev.slice(0, -1));
+    }, 3200);
+
+    return () => window.clearTimeout(timer);
+  }, [toastQueue]);
+
   const binCounts = useMemo(() => {
     return bins.reduce(
       (acc, bin) => {
@@ -648,6 +732,228 @@ export function WasteDashboard() {
     }
     return reports.filter((report) => report.status === reportFilter);
   }, [reportFilter, reports]);
+
+  const unreadNotifications = useMemo(
+    () => notifications.filter((item) => !item.read).length,
+    [notifications],
+  );
+
+  const tasksByTruck = useMemo(() => {
+    const map = new globalThis.Map<string, DriverTask[]>();
+    driverTasks.forEach((task) => {
+      if (!task.assignedTruckId || task.status === "completed") {
+        return;
+      }
+      const existing = map.get(task.assignedTruckId) ?? [];
+      existing.push(task);
+      map.set(task.assignedTruckId, existing);
+    });
+    return map;
+  }, [driverTasks]);
+
+  const pushNotification = useCallback(
+    (message: string, priority: TaskPriority) => {
+      const item: DriverNotification = {
+        id: makeId("notif"),
+        message,
+        priority,
+        timestamp: formatRelativeTime(new Date().toISOString()),
+        read: false,
+      };
+
+      setNotifications((prev) => [item, ...prev].slice(0, 50));
+      setToastQueue((prev) => [item, ...prev].slice(0, 4));
+    },
+    [],
+  );
+
+  const findNearestIdleTruck = useCallback(
+    (target: GeoPoint) => {
+      const busyTruckIds = new Set(
+        driverTasks
+          .filter((task) => task.status !== "completed" && task.assignedTruckId)
+          .map((task) => task.assignedTruckId as string),
+      );
+
+      const idleTrucks = geoTrucks.filter(
+        (truck) => truck.status === "idle" && !busyTruckIds.has(truck.id),
+      );
+
+      const candidatePool = idleTrucks.length ? idleTrucks : geoTrucks;
+      if (!candidatePool.length) {
+        return null;
+      }
+
+      let nearest = candidatePool[0];
+      let nearestDistance = toDistanceKm(target, {
+        latitude: nearest.latitude,
+        longitude: nearest.longitude,
+      });
+
+      candidatePool.slice(1).forEach((truck) => {
+        const distance = toDistanceKm(target, {
+          latitude: truck.latitude,
+          longitude: truck.longitude,
+        });
+        if (distance < nearestDistance) {
+          nearest = truck;
+          nearestDistance = distance;
+        }
+      });
+
+      return { truck: nearest, distanceKm: nearestDistance };
+    },
+    [driverTasks, geoTrucks],
+  );
+
+  const createTask = useCallback(
+    (task: Omit<DriverTask, "id" | "createdAt">) => {
+      const newTask: DriverTask = {
+        ...task,
+        id: makeId("task"),
+        createdAt: Date.now(),
+      };
+
+      setDriverTasks((prev) => [newTask, ...prev].slice(0, 80));
+      return newTask;
+    },
+    [],
+  );
+
+  const assignTaskFromBin = useCallback(
+    (bin: TwinBin) => {
+      const alreadyOpen = driverTasks.some(
+        (task) =>
+          task.source === "bin" &&
+          task.locationLabel.includes(bin.id) &&
+          task.status !== "completed",
+      );
+      if (alreadyOpen) {
+        return;
+      }
+
+      const nearest = findNearestIdleTruck({
+        latitude: bin.latitude,
+        longitude: bin.longitude,
+      });
+
+      const task = createTask({
+        title: `Bin ${bin.id} requires pickup`,
+        description: `Fill level reached ${bin.fill}% near ${bin.label}.`,
+        priority: "medium",
+        status: "pending",
+        source: "bin",
+        locationLabel: `${bin.label} (${bin.id})`,
+        location: { latitude: bin.latitude, longitude: bin.longitude },
+        assignedTruckId: nearest?.truck.id ?? null,
+        distanceKm: nearest ? Number(nearest.distanceKm.toFixed(2)) : null,
+      });
+
+      pushNotification(`🚨 Bin ${bin.id} is full near ${bin.label}`, "medium");
+      if (task.assignedTruckId && nearest) {
+        pushNotification(
+          `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
+          "medium",
+        );
+      }
+    },
+    [createTask, driverTasks, findNearestIdleTruck, pushNotification],
+  );
+
+  const assignTaskFromComplaint = useCallback(
+    (report: CitizenReport, coords: GeoPoint) => {
+      const alreadyOpen = driverTasks.some(
+        (task) =>
+          task.source === "complaint" &&
+          task.title.includes(report.id) &&
+          task.status !== "completed",
+      );
+      if (alreadyOpen) {
+        return;
+      }
+
+      const nearest = findNearestIdleTruck(coords);
+      const priority: TaskPriority =
+        report.severity === "high" ? "high" : "medium";
+
+      const task = createTask({
+        title: `Complaint ${report.id} requires action`,
+        description: report.description,
+        priority,
+        status: "pending",
+        source: "complaint",
+        locationLabel: report.location,
+        location: coords,
+        assignedTruckId: nearest?.truck.id ?? null,
+        distanceKm: nearest ? Number(nearest.distanceKm.toFixed(2)) : null,
+      });
+
+      pushNotification(
+        `📍 Complaint reported near ${report.location}`,
+        priority,
+      );
+      if (task.assignedTruckId && nearest) {
+        pushNotification(
+          `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
+          priority,
+        );
+      }
+    },
+    [createTask, driverTasks, findNearestIdleTruck, pushNotification],
+  );
+
+  useEffect(() => {
+    geoBins.forEach((bin) => {
+      if (bin.fill >= 80 && !alertedBinsRef.current.has(bin.id)) {
+        alertedBinsRef.current.add(bin.id);
+        assignTaskFromBin(bin);
+      }
+      if (bin.fill < 70 && alertedBinsRef.current.has(bin.id)) {
+        alertedBinsRef.current.delete(bin.id);
+      }
+    });
+  }, [assignTaskFromBin, geoBins]);
+
+  useEffect(() => {
+    reports.forEach((report) => {
+      if (notifiedComplaintsRef.current.has(report.id)) {
+        return;
+      }
+
+      const parsed = parseLatLng(report.location);
+      const coords = parsed
+        ? { latitude: parsed.lat, longitude: parsed.lng }
+        : {
+            latitude: DEFAULT_CITY_CENTER[1],
+            longitude: DEFAULT_CITY_CENTER[0],
+          };
+
+      notifiedComplaintsRef.current.add(report.id);
+      assignTaskFromComplaint(report, coords);
+    });
+  }, [assignTaskFromComplaint, reports]);
+
+  function acceptTask(taskId: string) {
+    setDriverTasks((prev) =>
+      prev.map((task) =>
+        task.id === taskId ? { ...task, status: "in-progress" } : task,
+      ),
+    );
+    pushNotification("Driver accepted a task", "medium");
+  }
+
+  function completeTask(taskId: string) {
+    setDriverTasks((prev) =>
+      prev.map((task) =>
+        task.id === taskId ? { ...task, status: "completed" } : task,
+      ),
+    );
+    pushNotification("Task marked as completed", "medium");
+  }
+
+  function markAllNotificationsRead() {
+    setNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
+  }
 
   function resetSelection() {
     setSelectedBinId(null);
@@ -808,33 +1114,43 @@ export function WasteDashboard() {
   }
 
   return (
-    <main className="min-h-screen bg-[#05070f] text-[#f5f7ff]">
-      <div className="mx-auto flex w-full max-w-[1440px] gap-0 px-2 py-2 lg:px-4">
-        <aside className="hidden w-[290px] shrink-0 border border-white/10 bg-[#070a13] lg:block">
-          <div className="border-b border-white/10 px-5 py-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white/5">
+    <main className="h-screen overflow-hidden bg-[#05070f] text-[#f5f7ff]">
+      <div className="mx-auto flex h-full w-full max-w-[1440px] gap-0 px-2 lg:px-4">
+        <aside className="hidden h-full w-[304px] shrink-0 border border-white/10 bg-[#060b18] lg:sticky lg:top-0 lg:flex lg:flex-col">
+          <div className="border-b border-white/10 bg-linear-to-r from-emerald-500/10 via-cyan-500/5 to-transparent px-5 py-5">
+            <div className="flex items-center gap-4">
+              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-cyan-300/25 bg-[#0d1529] shadow-[0_0_28px_rgba(34,211,238,0.24)]">
                 <Image
                   src="/logo.svg"
                   alt="Swachh City logo"
-                  width={32}
-                  height={32}
-                  className="h-8 w-8 object-contain"
+                  width={56}
+                  height={56}
+                  className="h-14 w-14 object-contain"
                   priority
                 />
               </div>
               <div>
-                <p className="text-xl font-semibold leading-none tracking-tight text-white">
+                <p className="text-2xl font-semibold leading-none tracking-tight text-white">
                   Swachh City
                 </p>
-                <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+                <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200/80">
                   Digital Twin
+                </p>
+                <p className="mt-1 inline-flex items-center gap-2 text-[11px] font-medium text-emerald-300/90">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  Real-time Operations
                 </p>
               </div>
             </div>
           </div>
 
-          <nav className="space-y-1.5 px-3 py-6">
+          <div className="px-4 pt-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+              Navigation
+            </p>
+          </div>
+
+          <nav className="mt-2 flex-1 space-y-1.5 px-3 pb-4">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeNav === item.key;
@@ -851,9 +1167,13 @@ export function WasteDashboard() {
                       resetSelection();
                     }
                   }}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition ${isActive ? "bg-white/12 text-white" : "text-slate-400 hover:bg-white/6 hover:text-slate-100"}`}
+                  className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left text-sm transition ${isActive ? "border-cyan-300/30 bg-cyan-400/10 text-white shadow-[0_0_0_1px_rgba(34,211,238,0.1)]" : "border-transparent text-slate-400 hover:border-white/10 hover:bg-white/6 hover:text-slate-100"}`}
                 >
-                  <Icon className="h-4 w-4" />
+                  <span
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${isActive ? "bg-cyan-300/15 text-cyan-200" : "bg-white/5 text-slate-400 group-hover:text-slate-200"}`}
+                  >
+                    <Icon className="h-4 w-4" />
+                  </span>
                   <span className="font-medium leading-none">{item.label}</span>
                   {badge && Number(badge) > 0 ? (
                     <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white">
@@ -865,38 +1185,45 @@ export function WasteDashboard() {
             })}
           </nav>
 
-          <div className="mt-24 border-t border-white/10 px-4 py-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/5 text-slate-300">
-                <User className="h-4 w-4" />
-              </div>
-              <div className="flex-1">
-                <p className="text-base font-semibold leading-none text-white">
-                  {authRole === "admin" ? "Admin User" : "Citizen User"}
-                </p>
-                <p className="mt-1 text-sm leading-none text-slate-500">
-                  {authRole === "admin" ? "Control Center" : "Field Reporter"}
-                </p>
-                {authUserId ? (
-                  <p className="mt-1 truncate text-xs text-slate-500">
-                    ID: {authUserId}
-                  </p>
-                ) : null}
-              </div>
-            </div>
+          <div className="border-t border-white/10 px-4 py-4">
+            <Card className="rounded-xl border-white/12 bg-[#0b1222]/90 shadow-[0_12px_36px_-20px_rgba(14,165,233,0.55)]">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-300/10 text-cyan-100">
+                    <User className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-lg font-semibold leading-none text-white">
+                      {authRole === "admin" ? "Admin User" : "Citizen User"}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {authRole === "admin"
+                        ? "Control Center"
+                        : "Field Reporter"}
+                    </p>
+                    {authUserId ? (
+                      <p className="mt-2 break-all rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[11px] font-medium text-slate-400">
+                        ID: {authUserId}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </aside>
 
-        <section className="min-w-0 flex-1 border border-white/10 bg-[#060913]">
-          <header className="flex items-center justify-between border-b border-white/10 px-6 py-4">
+        <section className="min-w-0 flex-1 overflow-y-auto border border-white/10 bg-[#060913]">
+          <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#060913]/95 px-6 py-4 backdrop-blur-md">
             <h1 className="text-3xl font-semibold tracking-tight text-white">
               {activeNav === "dashboard" && "System Overview"}
               {activeNav === "live-map" && "Digital Twin Live Map"}
+              {activeNav === "driver" && "Driver Dispatch Center"}
               {activeNav === "fleet" && "Fleet Operations"}
               {activeNav === "reports" && "Citizen Reports Center"}
               {activeNav === "analytics" && "Analytics Dashboard"}
             </h1>
-            <div className="flex items-center gap-4">
+            <div className="relative flex items-center gap-4">
               <button
                 type="button"
                 onClick={() => setSimulationActive((prev) => !prev)}
@@ -929,11 +1256,16 @@ export function WasteDashboard() {
               </button>
               <button
                 type="button"
+                onClick={() => setIsNotificationOpen((prev) => !prev)}
                 className="relative text-slate-300 transition hover:text-white"
                 aria-label="Notifications"
               >
                 <Bell className="h-5 w-5" />
-                <span className="absolute -right-0.5 -top-1.5 h-2 w-2 rounded-full bg-rose-500" />
+                {unreadNotifications > 0 ? (
+                  <span className="absolute -right-2 -top-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-white">
+                    {unreadNotifications > 9 ? "9+" : unreadNotifications}
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"
@@ -942,6 +1274,14 @@ export function WasteDashboard() {
               >
                 Logout
               </button>
+
+              {isNotificationOpen ? (
+                <NotificationPanel
+                  notifications={notifications}
+                  onMarkAllRead={markAllNotificationsRead}
+                  onClose={() => setIsNotificationOpen(false)}
+                />
+              ) : null}
             </div>
           </header>
 
@@ -1114,6 +1454,17 @@ export function WasteDashboard() {
               </section>
             ) : null}
 
+            {activeNav === "driver" ? (
+              <DriverDashboard
+                trucks={geoTrucks}
+                bins={geoBins}
+                tasks={driverTasks}
+                onAcceptTask={acceptTask}
+                onCompleteTask={completeTask}
+                tasksByTruck={tasksByTruck}
+              />
+            ) : null}
+
             {activeNav === "fleet" ? (
               <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {geoTrucks.map((truck) => (
@@ -1249,6 +1600,22 @@ export function WasteDashboard() {
           </div>
         </section>
       </div>
+
+      {toastQueue.length ? (
+        <div className="pointer-events-none fixed right-4 top-4 z-[60] flex w-[360px] max-w-[calc(100vw-1.25rem)] flex-col gap-2">
+          {toastQueue.map((item) => (
+            <div
+              key={item.id}
+              className={`pointer-events-auto rounded-xl border px-3 py-2 shadow-lg backdrop-blur-md transition ${item.priority === "high" ? "border-rose-300/35 bg-rose-500/15" : "border-amber-300/30 bg-amber-500/15"}`}
+            >
+              <p className="text-sm font-medium text-white">{item.message}</p>
+              <p className="mt-1 text-[11px] text-slate-300">
+                {item.timestamp}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -1312,22 +1679,26 @@ function AuthPanel({
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#05070f] px-4 py-8 text-[#f5f7ff]">
-      <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#0c1222] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.4)]">
-        <div className="mb-5 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/5">
+      <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-linear-to-b from-[#131c33] to-[#0c1222] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.4)]">
+        <div className="mb-6 flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-3">
+          <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-cyan-300/30 bg-[#0e1730] shadow-[0_0_34px_rgba(34,211,238,0.28)]">
             <Image
               src="/logo.svg"
               alt="Swachh City logo"
-              width={36}
-              height={36}
-              className="h-9 w-9 object-contain"
+              width={72}
+              height={72}
+              className="h-[4.25rem] w-[4.25rem] object-contain"
               priority
             />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold text-white">Swachh City</h1>
-            <p className="text-sm text-slate-400">Login / Register</p>
-            <p className="mt-0.5 text-xs text-slate-500">
+            <h1 className="text-[2rem] font-semibold leading-none text-white">
+              Swachh City
+            </h1>
+            <p className="mt-1.5 text-sm font-medium text-cyan-200/85">
+              Login / Register
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
               API: {BACKEND_BASE_URL}
             </p>
           </div>
@@ -1467,6 +1838,228 @@ function AuthPanel({
   );
 }
 
+function NotificationPanel({
+  notifications,
+  onMarkAllRead,
+  onClose,
+}: {
+  notifications: DriverNotification[];
+  onMarkAllRead: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Card className="absolute right-0 top-12 z-40 w-[360px] border-white/15 bg-[#0d1324]/95 shadow-[0_25px_70px_-25px_rgba(15,23,42,0.8)] backdrop-blur-xl">
+      <CardContent className="p-0">
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+          <p className="text-sm font-semibold text-white">Notifications</p>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={onMarkAllRead}>
+              Mark all read
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Close
+            </Button>
+          </div>
+        </div>
+        <div className="max-h-[360px] space-y-2 overflow-y-auto p-3">
+          {!notifications.length ? (
+            <p className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-400">
+              No notifications yet.
+            </p>
+          ) : (
+            notifications.map((item) => (
+              <div
+                key={item.id}
+                className={`rounded-lg border px-3 py-2 ${item.priority === "high" ? "border-rose-300/25 bg-rose-500/10" : "border-amber-300/20 bg-amber-500/10"}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm text-white">{item.message}</p>
+                  {!item.read ? (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-cyan-300" />
+                  ) : null}
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {item.timestamp}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DriverDashboard({
+  trucks,
+  bins,
+  tasks,
+  tasksByTruck,
+  onAcceptTask,
+  onCompleteTask,
+}: {
+  trucks: Array<FleetTruck & GeoPoint>;
+  bins: Array<TwinBin & GeoPoint>;
+  tasks: DriverTask[];
+  tasksByTruck: Map<string, DriverTask[]>;
+  onAcceptTask: (taskId: string) => void;
+  onCompleteTask: (taskId: string) => void;
+}) {
+  const openTasks = tasks.filter((task) => task.status !== "completed");
+
+  const nearbyBinsByTruck = useMemo(() => {
+    return trucks.map((truck) => {
+      const nearest = [...bins]
+        .map((bin) => ({
+          bin,
+          d: toDistanceKm(
+            { latitude: truck.latitude, longitude: truck.longitude },
+            { latitude: bin.latitude, longitude: bin.longitude },
+          ),
+        }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 3);
+      return { truckId: truck.id, nearest };
+    });
+  }, [trucks, bins]);
+
+  return (
+    <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+      <Card className="border-white/12 bg-[#111520]">
+        <CardContent className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-xl font-semibold text-white">Assigned Tasks</h3>
+            <Badge tone="info">{openTasks.length} open</Badge>
+          </div>
+          <div className="space-y-3">
+            {!tasks.length ? (
+              <p className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-400">
+                No active tasks. Simulation will generate tasks when bins become
+                full or complaints arrive.
+              </p>
+            ) : (
+              tasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onAcceptTask={onAcceptTask}
+                  onCompleteTask={onCompleteTask}
+                />
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="space-y-4">
+        {trucks.map((truck) => {
+          const active = tasksByTruck.get(truck.id) ?? [];
+          const closest = nearbyBinsByTruck.find(
+            (item) => item.truckId === truck.id,
+          );
+
+          return (
+            <Card key={truck.id} className="border-white/12 bg-[#111520]">
+              <CardContent className="p-4">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-white">
+                    {truck.name}
+                  </p>
+                  <Badge tone={active.length ? "warning" : "success"}>
+                    {active.length ? "Assigned" : "Idle"}
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Current load: {truck.capacity}%
+                </p>
+                <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2">
+                  <p className="mb-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                    Nearby bins
+                  </p>
+                  <div className="space-y-1.5 text-xs text-slate-300">
+                    {(closest?.nearest ?? []).map((item) => (
+                      <div
+                        key={item.bin.id}
+                        className="flex items-center justify-between"
+                      >
+                        <span>{item.bin.label}</span>
+                        <span className="text-slate-400">
+                          {item.d.toFixed(2)} km
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function TaskCard({
+  task,
+  onAcceptTask,
+  onCompleteTask,
+}: {
+  task: DriverTask;
+  onAcceptTask: (taskId: string) => void;
+  onCompleteTask: (taskId: string) => void;
+}) {
+  const statusTone =
+    task.status === "completed"
+      ? "success"
+      : task.status === "in-progress"
+        ? "info"
+        : "warning";
+
+  const priorityTone = task.priority === "high" ? "danger" : "warning";
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="mr-auto text-sm font-semibold text-white">{task.title}</p>
+        <Badge tone={priorityTone}>{task.priority.toUpperCase()}</Badge>
+        <Badge tone={statusTone}>{task.status}</Badge>
+      </div>
+      <p className="mt-2 text-sm text-slate-300">{task.description}</p>
+      <p className="mt-2 text-xs text-slate-400">{task.locationLabel}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {task.assignedTruckId ? (
+          <Badge tone="info">Truck assigned</Badge>
+        ) : (
+          <Badge tone="neutral">Awaiting driver</Badge>
+        )}
+        {task.distanceKm !== null ? (
+          <Badge tone="neutral">{task.distanceKm.toFixed(2)} km away</Badge>
+        ) : null}
+
+        {task.status === "pending" ? (
+          <Button
+            size="sm"
+            className="ml-auto"
+            onClick={() => onAcceptTask(task.id)}
+          >
+            Accept Task
+          </Button>
+        ) : null}
+        {task.status === "in-progress" ? (
+          <Button
+            size="sm"
+            className="ml-auto"
+            onClick={() => onCompleteTask(task.id)}
+          >
+            <Check className="mr-1 h-3.5 w-3.5" />
+            Mark Completed
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function TwinMapPanel({
   bins,
   trucks,
@@ -1583,7 +2176,10 @@ function TwinMapPanel({
                     <Leaf className="h-3.5 w-3.5" />
                   </button>
                 </MarkerContent>
-                <MarkerPopup>
+                <MarkerPopup
+                  className="min-w-[170px] border border-white/15 bg-[#0b1220]/95 px-3 py-2 text-slate-100 shadow-2xl backdrop-blur-md"
+                  offset={22}
+                >
                   <div className="space-y-1 text-xs">
                     <p className="font-semibold text-white">{bin.label}</p>
                     <p className="text-slate-300">Bin {bin.id}</p>
@@ -1610,7 +2206,10 @@ function TwinMapPanel({
                   <Truck className="h-4 w-4" />
                 </button>
               </MarkerContent>
-              <MarkerPopup>
+              <MarkerPopup
+                className="min-w-[190px] border border-cyan-300/20 bg-[#0b1220]/95 px-3 py-2 text-slate-100 shadow-2xl backdrop-blur-md"
+                offset={22}
+              >
                 <div className="space-y-1 text-xs">
                   <p className="font-semibold text-white">{truck.name}</p>
                   <p className="text-slate-300">Status: {truck.status}</p>

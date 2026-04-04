@@ -19,8 +19,8 @@ app.use(express.urlencoded({ extended: true }));
 
 
 app.get("/", (req, res) => {
-    res.json("🚀 Welcome to Smart Garbage Management Backend API");
-  });
+  res.json("🚀 Welcome to Smart Garbage Management Backend API");
+});
 
 app.use("/api/bins", binRoutes);
 app.use("/api/trucks", truckRoutes);
