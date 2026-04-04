@@ -57,18 +57,65 @@ export const loginUser = async (req, res) => {
   }
 };
 
-//  CREATE COMPLAINT
 export const createComplaint = async (req, res) => {
-  const complaint = await Complaint.create({
-    ...req.body,
-    user: req.user.id
-  });
+  try {
+    const {
+      image,
+      location,
+      address,
+      description,
+      severity,
+      issueType
+    } = req.body;
 
-  res.json(complaint);
+    if (!location || !description) {
+      return res.status(400).json({
+        message: "Location and description are required"
+      });
+    }
+
+    const complaint = await Complaint.create({
+      image,
+      location,
+      address,
+      description,
+      severity,
+      issueType,
+      user: req.user.id,
+      status: "PENDING"
+    });
+
+    res.status(201).json({
+      message: "Complaint submitted successfully",
+      data: complaint
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
-//  GET MY COMPLAINTS
 export const getMyComplaints = async (req, res) => {
-  const complaints = await Complaint.find({ user: req.user.id });
-  res.json(complaints);
+  try {
+    const { status, severity } = req.query;
+
+    let filter = {
+      user: req.user.id,
+      status: { $ne: "DELETED" } 
+    };
+
+    if (status) filter.status = status;
+    if (severity) filter.severity = severity;
+
+    const complaints = await Complaint.find(filter)
+      .sort({ createdAt: -1 });
+
+    res.json({
+      count: complaints.length,
+      data: complaints
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };

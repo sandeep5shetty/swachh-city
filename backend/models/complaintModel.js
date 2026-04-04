@@ -23,7 +23,7 @@ const complaintSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["PENDING", "IN_PROGRESS", "RESOLVED"],
+      enum: ["PENDING", "IN_PROGRESS", "RESOLVED","DELETED"],
       default: "PENDING"
     },
 

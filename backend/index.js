@@ -8,6 +8,7 @@ import truckRoutes from "./routes/truckRoutes.js";
 import complaintRoutes from "./routes/complaintRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import statsRoutes from "./routes/statsRoutes.js";
 
 dotenv.config();
 
@@ -19,8 +20,10 @@ app.use(express.urlencoded({ extended: true }));
 
 
 app.get("/", (req, res) => {
-    res.json("🚀 Welcome to Smart Garbage Management Backend API");
-  });
+  res.json("🚀 Welcome to Smart Garbage Management Backend API");
+});
+
+app.use("/api/stats", statsRoutes);
 
 app.use("/api/bins", binRoutes);
 app.use("/api/trucks", truckRoutes);
