@@ -1,6 +1,7 @@
 import Truck from "../models/truckModel.js";
 import TruckLocation from "../models/truckLocationModel.js";
 import Collection from "../models/collectionModel.js";
+import Driver from "../models/driverModel.js";
 
 
 export const createTruck = async (req, res) => {
@@ -45,7 +46,7 @@ export const createTruck = async (req, res) => {
 
 export const getTrucks = async (req, res) => {
   try {
-    const trucks = await Truck.find().sort({ createdAt: -1 });
+    const trucks = await Truck.find().populate("driver", "name phone").sort({ createdAt: -1 });
 
     res.json({
       count: trucks.length,
@@ -59,7 +60,7 @@ export const getTrucks = async (req, res) => {
 
 export const getTruckById = async (req, res) => {
   try {
-    const truck = await Truck.findById(req.params.id) .populate("route", "binId area landmark");
+    const truck = await Truck.findById(req.params.id) .populate("route", "binId area landmark").populate("driver", "name phone");
 
     if (!truck) {
       return res.status(404).json({ message: "Truck not found" });
@@ -210,4 +211,66 @@ export const assignRoute = async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
+};
+export const getAvailableTrucks = async (req, res) => {
+  try {
+    const trucks = await Truck.find({
+      status: "IDLE"
+    });
+
+    res.json(trucks);
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const getTruckRoute = async (req, res) => {
+  try {
+    const truck = await Truck.findById(req.params.id)
+      .populate("route", "binId area landmark");
+
+    res.json(truck.route);
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const getTruckLoad = async (req, res) => {
+  try {
+    const truck = await Truck.findById(req.params.id);
+
+    const remaining = truck.totalCapacity - truck.usedCapacity;
+
+    const percentage = Math.round(
+      (truck.usedCapacity / truck.totalCapacity) * 100
+    );
+
+    res.json({
+      usedCapacity: truck.usedCapacity,
+      remainingCapacity: remaining,
+      percentage
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const assignDriverToTruck = async (req, res) => {
+  const { driverId } = req.body;
+
+  const truck = await Truck.findById(req.params.id);
+  const driver = await Driver.findById(driverId);
+
+  if (!truck || !driver) {
+    return res.status(404).json({ message: "Not found" });
+  }
+
+  truck.driver = driverId;
+  driver.truck = truck._id;
+
+  await truck.save();
+  await driver.save();
+
+  res.json({ message: "Driver assigned to truck" });
 };

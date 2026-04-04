@@ -3,7 +3,8 @@ import {
   createComplaint,
   getComplaints,
   getComplaintById,
-  deleteComplaint
+  deleteComplaint,
+  linkComplaintToBin
 } from "../controllers/complaintController.js";
 
 const router = express.Router();
@@ -12,5 +13,6 @@ router.post("/", createComplaint);
 router.get("/", getComplaints);
 router.get("/:id", getComplaintById);
 router.get("/:id", deleteComplaint);
+router.post("/:id/link-bin", linkComplaintToBin);
 
 export default router;

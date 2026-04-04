@@ -39,7 +39,10 @@ const truckSchema = new mongoose.Schema(
         ref: "Bin"
       }
     ],
-
+    driver: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Driver"
+    },
     status: {
       type: String,
       enum: ["IDLE", "BUSY", "MAINTENANCE", "OFFLINE","ENROUTE", "RETURNING","COLLECTING"],

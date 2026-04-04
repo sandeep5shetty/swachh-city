@@ -142,3 +142,24 @@ export const updateComplaint = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+export const linkComplaintToBin = async (req, res) => {
+  try {
+    const complaint = await Complaint.findById(req.params.id);
+
+    if (!complaint) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    const bin = await Bin.findOne({
+      status: { $ne: "INACTIVE" }
+    });
+
+    complaint.bin = bin?._id;
+    await complaint.save();
+
+    res.json({ message: "Complaint linked to bin", bin });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

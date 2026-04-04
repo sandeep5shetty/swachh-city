@@ -1,3 +1,4 @@
+import Collection from "../models/collectionModel.js";
 import Bin from "../models/binModel.js";
 import Truck from "../models/truckModel.js";
 import Complaint from "../models/complaintModel.js";
@@ -56,3 +57,50 @@ export const getDashboardStats = async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 };
+
+export const getCollectionStats = async (req, res) => {
+  try {
+    const totalWaste = await Collection.aggregate([
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$collectedAmount" }
+        }
+      }
+    ]);
+
+    res.json({
+      totalWaste: totalWaste[0]?.total || 0
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const getTodayStats = async (req, res) => {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+  
+      const binsCollected = await Collection.countDocuments({
+        createdAt: { $gte: today }
+      });
+  
+      const complaintsToday = await Complaint.countDocuments({
+        createdAt: { $gte: today }
+      });
+  
+      const activeTrucks = await Truck.countDocuments({
+        status: "BUSY"
+      });
+  
+      res.json({
+        binsCollected,
+        complaintsToday,
+        activeTrucks
+      });
+  
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  };

@@ -1,6 +1,8 @@
 import Bin from "../models/binModel.js";
 import Collection from "../models/collectionModel.js";
 import Truck from "../models/truckModel.js";
+import Notification from "../models/notificationModel.js";
+
 
 export const createBin = async (req, res) => {
   try {
@@ -209,4 +211,52 @@ export const getCollectionHistory = async (req, res) => {
     .sort({ createdAt: -1 });
 
   res.json(history);
+};
+export const getNearbyBins = async (req, res) => {
+  try {
+    const { lat, lng, radius = 2 } = req.query;
+
+    const bins = await Bin.find({
+      "location.lat": {
+        $gte: lat - radius / 100,
+        $lte: lat + radius / 100
+      },
+      "location.lng": {
+        $gte: lng - radius / 100,
+        $lte: lng + radius / 100
+      },
+      status: { $ne: "INACTIVE" }
+    });
+
+    res.json(bins);
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const assignTruckToBin = async (req, res) => {
+  try {
+    const { truckId } = req.body;
+
+    const bin = await Bin.findById(req.params.id);
+    const truck = await Truck.findById(truckId);
+
+    if (!bin || !truck) {
+      return res.status(404).json({ message: "Bin or Truck not found" });
+    }
+
+    bin.assignedTruck = truckId;
+    await Notification.create({
+      driver: truck.driver,
+      message: "New bin assigned to your route"
+    });
+    await bin.save();
+    await Notification.save();
+
+
+    res.json({ message: "Truck assigned successfully" });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
