@@ -1,12 +1,20 @@
 import mongoose from "mongoose";
 
-const complaintSchema = new mongoose.Schema({
-  image: String,
-  location: {
-    lat: Number,
-    lng: Number
+const complaintSchema = new mongoose.Schema(
+  {
+    image: String,
+    location: {
+      lat: Number,
+      lng: Number
+    },
+    issueType: String,
+
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    }
   },
-  issueType: String
-}, { timestamps: true });
+  { timestamps: true }
+);
 
 export default mongoose.model("Complaint", complaintSchema);

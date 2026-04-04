@@ -6,21 +6,30 @@ import dotenv from "dotenv";
 import binRoutes from "./routes/binRoutes.js";
 import truckRoutes from "./routes/truckRoutes.js";
 import complaintRoutes from "./routes/complaintRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
 
 dotenv.config();
 
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Routes
+
+app.get("/", (req, res) => {
+    res.json("🚀 Welcome to Smart Garbage Management Backend API");
+  });
+
 app.use("/api/bins", binRoutes);
 app.use("/api/trucks", truckRoutes);
 app.use("/api/complaints", complaintRoutes);
 
-// DB + Server Start
+app.use("/api/user", userRoutes);
+app.use("/api/admin", adminRoutes);
+
+
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log("MongoDB Connected");
