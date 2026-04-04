@@ -33,10 +33,16 @@ const truckSchema = new mongoose.Schema(
       lat: Number,
       lng: Number
     },
+    route: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Bin"
+      }
+    ],
 
     status: {
       type: String,
-      enum: ["IDLE", "BUSY"],
+      enum: ["IDLE", "BUSY", "MAINTENANCE", "OFFLINE","ENROUTE", "RETURNING","COLLECTING"],
       default: "IDLE"
     }
   },

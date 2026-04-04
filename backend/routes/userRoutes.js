@@ -1,10 +1,5 @@
 import express from "express";
-import {
-  registerUser,
-  loginUser,
-  createComplaint,
-  getMyComplaints
-} from "../controllers/userController.js";
+import { registerUser,loginUser,createComplaint,getMyComplaints} from "../controllers/userController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
 

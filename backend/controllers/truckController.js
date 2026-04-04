@@ -59,7 +59,7 @@ export const getTrucks = async (req, res) => {
 
 export const getTruckById = async (req, res) => {
   try {
-    const truck = await Truck.findById(req.params.id);
+    const truck = await Truck.findById(req.params.id) .populate("route", "binId area landmark");
 
     if (!truck) {
       return res.status(404).json({ message: "Truck not found" });
@@ -182,6 +182,29 @@ export const getTruckHistoryByDate = async (req, res) => {
       date,
       totalEvents: history.length,
       data: history
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const assignRoute = async (req, res) => {
+  try {
+    const { binIds } = req.body;
+
+    const truck = await Truck.findById(req.params.id);
+
+    if (!truck) {
+      return res.status(404).json({ message: "Truck not found" });
+    }
+
+    truck.route = binIds;
+
+    await truck.save();
+
+    res.json({
+      message: "Route assigned successfully",
+      route: truck.route
     });
 
   } catch (error) {
