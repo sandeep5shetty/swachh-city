@@ -4,6 +4,7 @@ import {
   Bell,
   ChartNoAxesCombined,
   CircleAlert,
+  ExternalLink,
   Hand,
   LayoutDashboard,
   Leaf,
@@ -15,7 +16,7 @@ import {
   User,
   Users,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   Map as UiMap,
@@ -26,28 +27,33 @@ import {
   MarkerPopup,
   type MapViewport,
 } from "@/components/ui/map";
+import Image from "next/image";
 
 type NavKey = "dashboard" | "live-map" | "fleet" | "reports" | "analytics";
 type MapMode = "live" | "heatmap";
 type BinState = "green" | "yellow" | "red";
 type Severity = "low" | "medium" | "high";
 type ReportStatus = "pending" | "in-progress" | "resolved";
+type AuthRole = "citizen" | "admin";
+type AuthMode = "citizen-login" | "citizen-register" | "admin-login";
 
 type TwinBin = {
   id: string;
   label: string;
-  offsetLng: number;
-  offsetLat: number;
+  longitude: number;
+  latitude: number;
   fill: number;
 };
 
 type FleetTruck = {
   id: string;
   name: string;
-  status: "idle" | "en-route" | "collecting";
+  status: "idle" | "en-route" | "collecting" | "busy";
   capacity: number;
   route: string[];
   routeIndex: number;
+  longitude: number;
+  latitude: number;
 };
 
 type CitizenReport = {
@@ -58,6 +64,8 @@ type CitizenReport = {
   severity: Severity;
   status: ReportStatus;
   timestamp: string;
+  imageUrl?: string;
+  imagePublicId?: string;
 };
 
 type GeoPoint = {
@@ -66,143 +74,121 @@ type GeoPoint = {
 };
 
 const DEFAULT_CITY_CENTER: [number, number] = [77.5946, 12.9716];
+const BACKEND_BASE_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000";
 
-const initialBins: TwinBin[] = [
-  { id: "B01", label: "MG Road", offsetLng: 0.011, offsetLat: 0.008, fill: 34 },
-  { id: "B02", label: "Ulsoor", offsetLng: 0.021, offsetLat: 0.004, fill: 22 },
-  {
-    id: "B03",
-    label: "Indiranagar",
-    offsetLng: 0.028,
-    offsetLat: -0.005,
-    fill: 52,
-  },
-  {
-    id: "B04",
-    label: "Shivajinagar",
-    offsetLng: 0.006,
-    offsetLat: 0.017,
-    fill: 68,
-  },
-  {
-    id: "B05",
-    label: "Church Street",
-    offsetLng: -0.003,
-    offsetLat: 0.013,
-    fill: 82,
-  },
-  {
-    id: "B06",
-    label: "JP Nagar",
-    offsetLng: -0.02,
-    offsetLat: -0.018,
-    fill: 46,
-  },
-  { id: "B07", label: "Domlur", offsetLng: 0.038, offsetLat: -0.012, fill: 39 },
-  {
-    id: "B08",
-    label: "Koramangala",
-    offsetLng: 0.015,
-    offsetLat: -0.029,
-    fill: 63,
-  },
-  {
-    id: "B09",
-    label: "Richmond",
-    offsetLng: -0.012,
-    offsetLat: -0.006,
-    fill: 29,
-  },
-  { id: "B10", label: "Hebbal", offsetLng: 0.003, offsetLat: 0.041, fill: 74 },
-  {
-    id: "B11",
-    label: "KR Puram",
-    offsetLng: 0.052,
-    offsetLat: 0.012,
-    fill: 41,
-  },
-  {
-    id: "B12",
-    label: "Majestic",
-    offsetLng: -0.015,
-    offsetLat: 0.007,
-    fill: 55,
-  },
-];
+type BackendBin = {
+  _id: string;
+  binId?: string;
+  area?: string;
+  landmark?: string;
+  address?: string;
+  fillLevel?: number;
+  currentLoad?: number;
+  capacity?: number;
+  location?: { lat?: number; lng?: number };
+};
 
-const initialTrucks: FleetTruck[] = [
-  {
-    id: "TR-01",
-    name: "Truck Alpha",
-    status: "en-route",
-    capacity: 58,
-    route: ["B01", "B03", "B05", "B08"],
-    routeIndex: 0,
-  },
-  {
-    id: "TR-02",
-    name: "Truck Bravo",
-    status: "collecting",
-    capacity: 71,
-    route: ["B06", "B10", "B11", "B04"],
-    routeIndex: 0,
-  },
-  {
-    id: "TR-03",
-    name: "Truck Charlie",
-    status: "idle",
-    capacity: 33,
-    route: ["B02", "B12", "B07"],
-    routeIndex: 0,
-  },
-  {
-    id: "TR-04",
-    name: "Truck Delta",
-    status: "en-route",
-    capacity: 61,
-    route: ["B04", "B09", "B10", "B05"],
-    routeIndex: 0,
-  },
-  {
-    id: "TR-05",
-    name: "Truck Echo",
-    status: "idle",
-    capacity: 27,
-    route: ["B09", "B06", "B01"],
-    routeIndex: 0,
-  },
-];
+type BackendTruck = {
+  _id: string;
+  regNo?: string;
+  driverName?: string;
+  usedCapacity?: number;
+  totalCapacity?: number;
+  status?: "IDLE" | "BUSY";
+  currentLocation?: { lat?: number; lng?: number };
+};
 
-const initialReports: CitizenReport[] = [
-  {
-    id: "R-201",
-    title: "Overflowing Bin on MG Road",
-    description:
-      "Garbage scattered around bin area, smells very bad and attracts dogs.",
-    location: "MG Road, Ward 42",
-    severity: "high",
-    status: "pending",
-    timestamp: "2 hours ago",
-  },
-  {
-    id: "R-202",
-    title: "Damaged Container",
-    description: "The lid is broken and dogs are getting in.",
-    location: "JP Nagar 1st Phase",
-    severity: "medium",
-    status: "resolved",
-    timestamp: "Yesterday",
-  },
-  {
-    id: "R-203",
-    title: "Missed Pickup Near Bus Stop",
-    description: "No pickup in the last two days in this stretch.",
-    location: "Indiranagar 100ft Rd",
-    severity: "medium",
-    status: "in-progress",
-    timestamp: "35 mins ago",
-  },
-];
+type BackendComplaint = {
+  _id: string;
+  issueType?: string;
+  image?: string;
+  location?: { lat?: number; lng?: number };
+  createdAt?: string;
+};
+
+type BackendAuthResponse = {
+  id?: string;
+  role?: AuthRole;
+  token: string;
+};
+
+function formatRelativeTime(input?: string) {
+  if (!input) {
+    return "Just now";
+  }
+
+  const date = new Date(input);
+  if (Number.isNaN(date.getTime())) {
+    return "Just now";
+  }
+
+  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} mins ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hours ago`;
+  const days = Math.round(hours / 24);
+  return `${days} days ago`;
+}
+
+function inferSeverity(issueType?: string): Severity {
+  const normalized = (issueType ?? "").toLowerCase();
+  if (normalized.includes("hazard") || normalized.includes("critical")) {
+    return "high";
+  }
+  if (normalized.includes("overflow") || normalized.includes("medium")) {
+    return "medium";
+  }
+  return "low";
+}
+
+function parseLatLng(input: string): { lat: number; lng: number } | null {
+  const matches = input.match(/-?\d+(?:\.\d+)?/g);
+  if (!matches || matches.length < 2) {
+    return null;
+  }
+
+  const lat = Number(matches[0]);
+  const lng = Number(matches[1]);
+
+  if (
+    Number.isNaN(lat) ||
+    Number.isNaN(lng) ||
+    Math.abs(lat) > 90 ||
+    Math.abs(lng) > 180
+  ) {
+    return null;
+  }
+
+  return { lat, lng };
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit) {
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch {
+    throw new Error(
+      `Cannot connect to backend at ${BACKEND_BASE_URL}. Make sure backend server is running and NEXT_PUBLIC_BACKEND_URL is correct.`,
+    );
+  }
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(payload?.message ?? `Request failed: ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
 
 const navItems: Array<{
   key: NavKey;
@@ -242,33 +228,40 @@ function markerScale(fill: number) {
   return 1.2;
 }
 
-function toGeoPoint(
-  anchor: [number, number],
-  lngOffset: number,
-  latOffset: number,
-): GeoPoint {
-  return {
-    longitude: anchor[0] + lngOffset,
-    latitude: anchor[1] + latOffset,
-  };
+function toCloudinaryPreview(url: string, width = 320, height = 200) {
+  if (!url.includes("/upload/")) {
+    return url;
+  }
+
+  return url.replace(
+    "/upload/",
+    `/upload/f_auto,q_auto,c_fill,w_${width},h_${height}/`,
+  );
 }
 
 export function WasteDashboard() {
+  const [authReady, setAuthReady] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authRole, setAuthRole] = useState<AuthRole | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("citizen-login");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const [activeNav, setActiveNav] = useState<NavKey>("dashboard");
   const [mapMode, setMapMode] = useState<MapMode>("live");
   const [simulationActive, setSimulationActive] = useState(true);
 
-  const [bins, setBins] = useState(initialBins);
-  const [trucks, setTrucks] = useState(initialTrucks);
-  const [reports, setReports] = useState(initialReports);
+  const [bins, setBins] = useState<TwinBin[]>([]);
+  const [trucks, setTrucks] = useState<FleetTruck[]>([]);
+  const [reports, setReports] = useState<CitizenReport[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const [selectedBinId, setSelectedBinId] = useState<string | null>(null);
   const [selectedTruckId, setSelectedTruckId] = useState<string | null>(null);
   const [reportFilter, setReportFilter] = useState<"all" | ReportStatus>("all");
 
-  const [userLocation, setUserLocation] = useState<[number, number] | null>(
-    null,
-  );
   const [mapViewport, setMapViewport] = useState<Partial<MapViewport>>({
     center: DEFAULT_CITY_CENTER,
     zoom: 12,
@@ -280,15 +273,260 @@ export function WasteDashboard() {
   const [descriptionInput, setDescriptionInput] = useState("");
   const [severityInput, setSeverityInput] = useState<Severity>("low");
   const [imageName, setImageName] = useState("No image selected");
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [isImageUploading, setIsImageUploading] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
 
-  const anchorCenter = userLocation ?? DEFAULT_CITY_CENTER;
+  useEffect(() => {
+    const token = window.localStorage.getItem("swachh_auth_token");
+    const role = window.localStorage.getItem(
+      "swachh_auth_role",
+    ) as AuthRole | null;
+    const userId = window.localStorage.getItem("swachh_auth_user_id");
+
+    if (token && (role === "admin" || role === "citizen")) {
+      setAuthToken(token);
+      setAuthRole(role);
+      setAuthUserId(userId);
+    }
+
+    setAuthReady(true);
+  }, []);
+
+  function persistSession(
+    payload: BackendAuthResponse,
+    fallbackRole: AuthRole,
+  ) {
+    const resolvedRole = payload.role ?? fallbackRole;
+
+    setAuthToken(payload.token);
+    setAuthRole(resolvedRole);
+    setAuthUserId(payload.id ?? null);
+    setAuthError(null);
+
+    window.localStorage.setItem("swachh_auth_token", payload.token);
+    window.localStorage.setItem("swachh_auth_role", resolvedRole);
+    if (payload.id) {
+      window.localStorage.setItem("swachh_auth_user_id", payload.id);
+    } else {
+      window.localStorage.removeItem("swachh_auth_user_id");
+    }
+  }
+
+  function logout() {
+    setAuthToken(null);
+    setAuthRole(null);
+    setAuthUserId(null);
+    setAuthError(null);
+    setDataError(null);
+    setReports([]);
+    setBins([]);
+    setTrucks([]);
+
+    window.localStorage.removeItem("swachh_auth_token");
+    window.localStorage.removeItem("swachh_auth_role");
+    window.localStorage.removeItem("swachh_auth_user_id");
+  }
+
+  async function loginCitizen(email: string, password: string) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const payload = await fetchJson<BackendAuthResponse>("/api/user/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      persistSession(payload, "citizen");
+    } catch (error) {
+      setAuthError(
+        error instanceof Error ? error.message : "Citizen login failed",
+      );
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function loginAdmin(email: string, password: string) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const payload = await fetchJson<BackendAuthResponse>("/api/admin/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      persistSession(payload, "admin");
+    } catch (error) {
+      setAuthError(
+        error instanceof Error ? error.message : "Admin login failed",
+      );
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function registerCitizen(form: {
+    name: string;
+    email: string;
+    password: string;
+    phone?: string;
+    address?: string;
+    gender?: "Male" | "Female" | "Other";
+  }) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const payload = await fetchJson<BackendAuthResponse>(
+        "/api/user/register",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: form.name,
+            email: form.email,
+            password: form.password,
+            phone: form.phone ? Number(form.phone) : undefined,
+            address: form.address,
+            gender: form.gender,
+          }),
+        },
+      );
+      persistSession(payload, "citizen");
+    } catch (error) {
+      setAuthError(
+        error instanceof Error ? error.message : "Citizen registration failed",
+      );
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  const loadOperationalData = useCallback(async () => {
+    if (!authToken || !authRole) {
+      return;
+    }
+
+    const authHeader = { Authorization: `Bearer ${authToken}` };
+
+    const [rawBins, rawTrucks, rawComplaints] = await Promise.all(
+      authRole === "admin"
+        ? [
+            fetchJson<BackendBin[]>("/api/admin/bins", {
+              headers: authHeader,
+            }),
+            fetchJson<BackendTruck[]>("/api/admin/trucks", {
+              headers: authHeader,
+            }),
+            fetchJson<BackendComplaint[]>("/api/admin/complaints", {
+              headers: authHeader,
+            }),
+          ]
+        : [
+            fetchJson<{ data?: BackendBin[] } | BackendBin[]>("/api/bins"),
+            fetchJson<{ data?: BackendTruck[] } | BackendTruck[]>(
+              "/api/trucks",
+            ),
+            fetchJson<BackendComplaint[]>("/api/user/my-complaints", {
+              headers: authHeader,
+            }),
+          ],
+    );
+
+    const backendBins = Array.isArray(rawBins) ? rawBins : (rawBins.data ?? []);
+    const mappedBins = backendBins.map((bin, index) => {
+      const fallbackLng = DEFAULT_CITY_CENTER[0] + ((index % 6) - 2.5) * 0.008;
+      const fallbackLat =
+        DEFAULT_CITY_CENTER[1] + (Math.floor(index / 6) - 1) * 0.008;
+      const computedFill =
+        typeof bin.fillLevel === "number"
+          ? bin.fillLevel
+          : typeof bin.currentLoad === "number" &&
+              typeof bin.capacity === "number" &&
+              bin.capacity > 0
+            ? Math.round((bin.currentLoad / bin.capacity) * 100)
+            : 0;
+
+      return {
+        id: bin.binId ?? bin._id,
+        label:
+          bin.area ?? bin.landmark ?? bin.address ?? bin.binId ?? "Unnamed Bin",
+        longitude: bin.location?.lng ?? fallbackLng,
+        latitude: bin.location?.lat ?? fallbackLat,
+        fill: Math.max(0, Math.min(100, computedFill)),
+      } satisfies TwinBin;
+    });
+
+    const binIds = mappedBins.map((bin) => bin.id);
+    const backendTrucks = Array.isArray(rawTrucks)
+      ? rawTrucks
+      : (rawTrucks.data ?? []);
+
+    const mappedTrucks = backendTrucks.map((truck, index) => {
+      const usedCapacity = truck.usedCapacity ?? 0;
+      const totalCapacity = truck.totalCapacity ?? 1;
+      const route =
+        binIds.length >= 4
+          ? [
+              binIds[index % binIds.length],
+              binIds[(index + 1) % binIds.length],
+              binIds[(index + 2) % binIds.length],
+              binIds[(index + 3) % binIds.length],
+            ]
+          : binIds;
+      const firstRouteBin = mappedBins.find((bin) => bin.id === route[0]);
+
+      return {
+        id: truck._id,
+        name: `${truck.regNo ?? "Truck"}${truck.driverName ? ` · ${truck.driverName}` : ""}`,
+        status: truck.status === "BUSY" ? "busy" : "idle",
+        capacity: Math.max(
+          0,
+          Math.min(100, Math.round((usedCapacity / totalCapacity) * 100)),
+        ),
+        route,
+        routeIndex: 0,
+        longitude:
+          truck.currentLocation?.lng ??
+          firstRouteBin?.longitude ??
+          DEFAULT_CITY_CENTER[0],
+        latitude:
+          truck.currentLocation?.lat ??
+          firstRouteBin?.latitude ??
+          DEFAULT_CITY_CENTER[1],
+      } satisfies FleetTruck;
+    });
+
+    const mappedComplaints = rawComplaints
+      .map((complaint, index) => {
+        const lat = complaint.location?.lat;
+        const lng = complaint.location?.lng;
+        const locationLabel =
+          typeof lat === "number" && typeof lng === "number"
+            ? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+            : "Location unavailable";
+
+        return {
+          id: complaint._id ?? `R-${index + 1}`,
+          title: complaint.issueType
+            ? `Issue: ${complaint.issueType}`
+            : "Citizen Complaint",
+          description:
+            complaint.issueType ?? "Citizen has reported a sanitation issue.",
+          location: locationLabel,
+          severity: inferSeverity(complaint.issueType),
+          status: "pending",
+          timestamp: formatRelativeTime(complaint.createdAt),
+          imageUrl: complaint.image,
+        } satisfies CitizenReport;
+      })
+      .reverse();
+
+    setBins(mappedBins);
+    setTrucks(mappedTrucks);
+    setReports(mappedComplaints);
+  }, [authToken, authRole]);
 
   const geoBins = useMemo(() => {
-    return bins.map((bin) => ({
-      ...bin,
-      ...toGeoPoint(anchorCenter, bin.offsetLng, bin.offsetLat),
-    }));
-  }, [bins, anchorCenter]);
+    return bins;
+  }, [bins]);
 
   const binLookup = useMemo(() => {
     const map = new globalThis.Map<string, (typeof geoBins)[number]>();
@@ -298,15 +536,16 @@ export function WasteDashboard() {
 
   const geoTrucks = useMemo(() => {
     return trucks.map((truck) => {
-      const anchorBin =
-        binLookup.get(truck.route[truck.routeIndex]) ?? geoBins[0];
+      const routeBin = binLookup.get(truck.route[truck.routeIndex]);
       return {
         ...truck,
-        longitude: anchorBin.longitude,
-        latitude: anchorBin.latitude,
+        longitude:
+          truck.longitude ?? routeBin?.longitude ?? DEFAULT_CITY_CENTER[0],
+        latitude:
+          truck.latitude ?? routeBin?.latitude ?? DEFAULT_CITY_CENTER[1],
       };
     });
-  }, [trucks, binLookup, geoBins]);
+  }, [trucks, binLookup]);
 
   const routeCoordinates = useMemo(() => {
     return geoTrucks.map((truck) => {
@@ -325,57 +564,60 @@ export function WasteDashboard() {
   }, [geoTrucks, binLookup]);
 
   useEffect(() => {
-    if (!simulationActive) {
+    if (!authReady || !authToken || !authRole) {
+      setIsLoadingData(false);
       return;
     }
 
-    const timer = window.setInterval(() => {
-      setBins((previousBins) => {
-        const nextBins = previousBins.map((bin) => {
-          const fillDelta = bin.fill < 55 ? 3 : 2;
-          let fill = Math.min(98, bin.fill + fillDelta);
+    let cancelled = false;
 
-          if (fill >= 84 && Math.random() > 0.45) {
-            fill = Math.max(18, fill - 44);
-          }
+    async function runInitialLoad() {
+      try {
+        setDataError(null);
+        setIsLoadingData(true);
+        await loadOperationalData();
+      } catch (error) {
+        if (!cancelled) {
+          setDataError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load backend data.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingData(false);
+        }
+      }
+    }
 
-          return { ...bin, fill };
-        });
+    runInitialLoad();
 
-        setTrucks((previousTrucks) =>
-          previousTrucks.map((truck) => {
-            const nextRouteIndex = (truck.routeIndex + 1) % truck.route.length;
-            const nextBin =
-              nextBins.find((bin) => bin.id === truck.route[nextRouteIndex]) ??
-              nextBins[0];
-            const nextStatus =
-              nextBin.fill > 78
-                ? "collecting"
-                : nextRouteIndex % 2 === 0
-                  ? "en-route"
-                  : "idle";
-            const nextCapacity = Math.min(
-              94,
-              Math.max(
-                16,
-                truck.capacity + (nextStatus === "collecting" ? 6 : -2),
-              ),
-            );
-            return {
-              ...truck,
-              routeIndex: nextRouteIndex,
-              status: nextStatus,
-              capacity: nextCapacity,
-            };
-          }),
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, authToken, authRole, loadOperationalData]);
+
+  useEffect(() => {
+    if (!authReady || !authToken || !authRole || !simulationActive) {
+      return;
+    }
+
+    const timer = window.setInterval(async () => {
+      try {
+        await loadOperationalData();
+        setDataError(null);
+      } catch (error) {
+        setDataError(
+          error instanceof Error
+            ? error.message
+            : "Unable to refresh backend data.",
         );
-
-        return nextBins;
-      });
-    }, 2800);
+      }
+    }, 10000);
 
     return () => window.clearInterval(timer);
-  }, [simulationActive]);
+  }, [authReady, authToken, authRole, simulationActive, loadOperationalData]);
 
   const binCounts = useMemo(() => {
     return bins.reduce(
@@ -412,44 +654,156 @@ export function WasteDashboard() {
     setSelectedTruckId(null);
   }
 
-  function submitReport() {
-    if (!locationInput.trim() || !descriptionInput.trim()) {
+  async function submitReport() {
+    if (
+      !locationInput.trim() ||
+      !descriptionInput.trim() ||
+      isImageUploading ||
+      !authToken ||
+      !authRole
+    ) {
       return;
     }
 
-    const report: CitizenReport = {
-      id: `R-${Math.floor(1000 + Math.random() * 9000)}`,
-      title: `Manual report at ${locationInput.trim()}`,
-      description: descriptionInput.trim(),
-      location: locationInput.trim(),
-      severity: severityInput,
-      status: "pending",
-      timestamp: "Just now",
-    };
+    try {
+      const parsedCoords = parseLatLng(locationInput.trim());
+      const fallbackCenter = mapViewport.center ?? DEFAULT_CITY_CENTER;
+      const locationPayload = parsedCoords ?? {
+        lat: fallbackCenter[1],
+        lng: fallbackCenter[0],
+      };
 
-    setReports((prev) => [report, ...prev]);
-    setLocationInput("");
-    setDescriptionInput("");
-    setSeverityInput("low");
-    setImageName("No image selected");
-    setActiveNav("reports");
+      const complaintPath =
+        authRole === "citizen" ? "/api/user/complaint" : "/api/complaints";
+
+      await fetchJson<BackendComplaint>(complaintPath, {
+        method: "POST",
+        headers:
+          authRole === "citizen"
+            ? { Authorization: `Bearer ${authToken}` }
+            : undefined,
+        body: JSON.stringify({
+          issueType: `${severityInput.toUpperCase()}: ${descriptionInput.trim()}`,
+          image: uploadedImageUrl ?? undefined,
+          location: locationPayload,
+        }),
+      });
+
+      await loadOperationalData();
+      setLocationInput("");
+      setDescriptionInput("");
+      setSeverityInput("low");
+      setImageName("No image selected");
+      setUploadedImageUrl(null);
+      setImageUploadError(null);
+      setDataError(null);
+      setActiveNav("reports");
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to create complaint: ${error.message}`
+          : "Failed to create complaint",
+      );
+    }
   }
 
-  function cycleTruckStatus(truckId: string) {
-    setTrucks((prev) =>
-      prev.map((truck) => {
-        if (truck.id !== truckId) {
-          return truck;
-        }
+  async function uploadImageToCloudinary(file: File) {
+    const uploadFolder = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_FOLDER;
 
-        const nextStatus =
-          truck.status === "idle"
-            ? "en-route"
-            : truck.status === "en-route"
-              ? "collecting"
-              : "idle";
-        return { ...truck, status: nextStatus };
-      }),
+    try {
+      setIsImageUploading(true);
+      setImageUploadError(null);
+
+      const formData = new FormData();
+      formData.append("file", file);
+      if (uploadFolder) {
+        formData.append("folder", uploadFolder);
+      }
+
+      const response = await fetch("/api/cloudinary/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorPayload = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(errorPayload?.error ?? "Cloudinary upload failed");
+      }
+
+      const payload = (await response.json()) as {
+        secure_url?: string;
+        public_id?: string;
+      };
+
+      if (!payload.secure_url) {
+        throw new Error("Cloudinary response did not include secure_url");
+      }
+
+      setUploadedImageUrl(payload.secure_url);
+    } catch (error) {
+      setUploadedImageUrl(null);
+      setImageUploadError(
+        error instanceof Error
+          ? error.message
+          : "Image upload failed. Please retry.",
+      );
+    } finally {
+      setIsImageUploading(false);
+    }
+  }
+
+  async function cycleTruckStatus(truckId: string) {
+    if (authRole !== "admin") {
+      setDataError("Only admin can change truck status.");
+      return;
+    }
+
+    const truck = trucks.find((item) => item.id === truckId);
+    if (!truck) {
+      return;
+    }
+
+    const nextBackendStatus = truck.status === "idle" ? "BUSY" : "IDLE";
+
+    try {
+      await fetchJson<{ message: string }>(`/api/trucks/${truckId}`, {
+        method: "POST",
+        body: JSON.stringify({ status: nextBackendStatus }),
+      });
+      await loadOperationalData();
+      setDataError(null);
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to update truck status: ${error.message}`
+          : "Failed to update truck status",
+      );
+    }
+  }
+
+  if (!authReady) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#05070f] px-4 text-[#f5f7ff]">
+        <p className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
+          Restoring session...
+        </p>
+      </main>
+    );
+  }
+
+  if (!authToken || !authRole) {
+    return (
+      <AuthPanel
+        mode={authMode}
+        setMode={setAuthMode}
+        isSubmitting={authSubmitting}
+        error={authError}
+        onCitizenLogin={loginCitizen}
+        onCitizenRegister={registerCitizen}
+        onAdminLogin={loginAdmin}
+      />
     );
   }
 
@@ -459,8 +813,15 @@ export function WasteDashboard() {
         <aside className="hidden w-[290px] shrink-0 border border-white/10 bg-[#070a13] lg:block">
           <div className="border-b border-white/10 px-5 py-5">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600/20 text-emerald-400">
-                <Leaf className="h-5 w-5" />
+              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white/5">
+                <Image
+                  src="/logo.svg"
+                  alt="Swachh City logo"
+                  width={32}
+                  height={32}
+                  className="h-8 w-8 object-contain"
+                  priority
+                />
               </div>
               <div>
                 <p className="text-xl font-semibold leading-none tracking-tight text-white">
@@ -511,11 +872,16 @@ export function WasteDashboard() {
               </div>
               <div className="flex-1">
                 <p className="text-base font-semibold leading-none text-white">
-                  Admin User
+                  {authRole === "admin" ? "Admin User" : "Citizen User"}
                 </p>
                 <p className="mt-1 text-sm leading-none text-slate-500">
-                  Control Center
+                  {authRole === "admin" ? "Control Center" : "Field Reporter"}
                 </p>
+                {authUserId ? (
+                  <p className="mt-1 truncate text-xs text-slate-500">
+                    ID: {authUserId}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -540,8 +906,26 @@ export function WasteDashboard() {
                   className={`inline-block h-2.5 w-2.5 rounded-full ${simulationActive ? "bg-emerald-400" : "bg-slate-500"}`}
                 />
                 <span>
-                  {simulationActive ? "Simulation Active" : "Simulation Paused"}
+                  {simulationActive ? "Live Sync Active" : "Live Sync Paused"}
                 </span>
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setDataError(null);
+                    await loadOperationalData();
+                  } catch (error) {
+                    setDataError(
+                      error instanceof Error
+                        ? error.message
+                        : "Unable to refresh backend data.",
+                    );
+                  }
+                }}
+                className="rounded-full border border-white/10 bg-white/5 px-3.5 py-2 text-sm text-slate-300 transition hover:bg-white/10"
+              >
+                Refresh
               </button>
               <button
                 type="button"
@@ -551,10 +935,28 @@ export function WasteDashboard() {
                 <Bell className="h-5 w-5" />
                 <span className="absolute -right-0.5 -top-1.5 h-2 w-2 rounded-full bg-rose-500" />
               </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="rounded-full border border-white/10 bg-white/5 px-3.5 py-2 text-sm text-slate-300 transition hover:bg-white/10"
+              >
+                Logout
+              </button>
             </div>
           </header>
 
           <div className="space-y-4 p-4 sm:p-5 lg:p-6">
+            {isLoadingData ? (
+              <p className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-200">
+                Loading live backend data...
+              </p>
+            ) : null}
+            {dataError ? (
+              <p className="rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                {dataError}
+              </p>
+            ) : null}
+
             {activeNav === "dashboard" ? (
               <>
                 <section className="grid gap-4 lg:grid-cols-4">
@@ -603,7 +1005,6 @@ export function WasteDashboard() {
                         coords.longitude,
                         coords.latitude,
                       ];
-                      setUserLocation(nextCenter);
                       setMapViewport((prev) => ({
                         ...prev,
                         center: nextCenter,
@@ -638,10 +1039,14 @@ export function WasteDashboard() {
                     descriptionInput={descriptionInput}
                     severityInput={severityInput}
                     imageName={imageName}
+                    uploadedImageUrl={uploadedImageUrl}
+                    isImageUploading={isImageUploading}
+                    imageUploadError={imageUploadError}
                     setLocationInput={setLocationInput}
                     setDescriptionInput={setDescriptionInput}
                     setSeverityInput={setSeverityInput}
                     setImageName={setImageName}
+                    onUploadImage={uploadImageToCloudinary}
                     onSubmit={submitReport}
                   />
                 </section>
@@ -664,7 +1069,6 @@ export function WasteDashboard() {
                       coords.longitude,
                       coords.latitude,
                     ];
-                    setUserLocation(nextCenter);
                     setMapViewport((prev) => ({
                       ...prev,
                       center: nextCenter,
@@ -725,7 +1129,7 @@ export function WasteDashboard() {
                         </h3>
                       </div>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${truck.status === "collecting" ? "bg-amber-500/16 text-amber-300" : truck.status === "en-route" ? "bg-cyan-500/18 text-cyan-300" : "bg-slate-500/20 text-slate-300"}`}
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${truck.status === "busy" || truck.status === "collecting" ? "bg-amber-500/16 text-amber-300" : truck.status === "en-route" ? "bg-cyan-500/18 text-cyan-300" : "bg-slate-500/20 text-slate-300"}`}
                       >
                         {truck.status}
                       </span>
@@ -749,9 +1153,12 @@ export function WasteDashboard() {
                     <button
                       type="button"
                       onClick={() => cycleTruckStatus(truck.id)}
+                      disabled={authRole !== "admin"}
                       className="mt-4 w-full rounded-lg border border-white/10 bg-white/5 py-2 text-sm font-medium text-slate-100 transition hover:bg-white/10"
                     >
-                      Change Status
+                      {authRole === "admin"
+                        ? "Change Status"
+                        : "Admin only action"}
                     </button>
                   </article>
                 ))}
@@ -771,10 +1178,14 @@ export function WasteDashboard() {
                   descriptionInput={descriptionInput}
                   severityInput={severityInput}
                   imageName={imageName}
+                  uploadedImageUrl={uploadedImageUrl}
+                  isImageUploading={isImageUploading}
+                  imageUploadError={imageUploadError}
                   setLocationInput={setLocationInput}
                   setDescriptionInput={setDescriptionInput}
                   setSeverityInput={setSeverityInput}
                   setImageName={setImageName}
+                  onUploadImage={uploadImageToCloudinary}
                   onSubmit={submitReport}
                 />
               </section>
@@ -787,7 +1198,7 @@ export function WasteDashboard() {
                     Bin Fill Distribution
                   </h3>
                   <p className="mt-1 text-sm text-slate-400">
-                    Live values from hardcoded simulation state.
+                    Live values from backend API.
                   </p>
                   <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
                     {bins.map((bar) => (
@@ -837,6 +1248,220 @@ export function WasteDashboard() {
             ) : null}
           </div>
         </section>
+      </div>
+    </main>
+  );
+}
+
+function AuthPanel({
+  mode,
+  setMode,
+  isSubmitting,
+  error,
+  onCitizenLogin,
+  onCitizenRegister,
+  onAdminLogin,
+}: {
+  mode: AuthMode;
+  setMode: (mode: AuthMode) => void;
+  isSubmitting: boolean;
+  error: string | null;
+  onCitizenLogin: (email: string, password: string) => Promise<void>;
+  onCitizenRegister: (form: {
+    name: string;
+    email: string;
+    password: string;
+    phone?: string;
+    address?: string;
+    gender?: "Male" | "Female" | "Other";
+  }) => Promise<void>;
+  onAdminLogin: (email: string, password: string) => Promise<void>;
+}) {
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+
+  const [registerName, setRegisterName] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerPhone, setRegisterPhone] = useState("");
+  const [registerAddress, setRegisterAddress] = useState("");
+  const [registerGender, setRegisterGender] = useState<
+    "Male" | "Female" | "Other" | ""
+  >("");
+
+  async function submitCurrentMode() {
+    if (mode === "citizen-login") {
+      await onCitizenLogin(loginEmail.trim(), loginPassword);
+      return;
+    }
+
+    if (mode === "admin-login") {
+      await onAdminLogin(loginEmail.trim(), loginPassword);
+      return;
+    }
+
+    await onCitizenRegister({
+      name: registerName.trim(),
+      email: registerEmail.trim(),
+      password: registerPassword,
+      phone: registerPhone.trim() || undefined,
+      address: registerAddress.trim() || undefined,
+      gender: registerGender || undefined,
+    });
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#05070f] px-4 py-8 text-[#f5f7ff]">
+      <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#0c1222] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.4)]">
+        <div className="mb-5 flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/5">
+            <Image
+              src="/logo.svg"
+              alt="Swachh City logo"
+              width={36}
+              height={36}
+              className="h-9 w-9 object-contain"
+              priority
+            />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-white">Swachh City</h1>
+            <p className="text-sm text-slate-400">Login / Register</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              API: {BACKEND_BASE_URL}
+            </p>
+          </div>
+        </div>
+
+        <div className="mb-5 grid grid-cols-3 gap-2 rounded-lg border border-white/10 bg-black/25 p-1">
+          <button
+            type="button"
+            onClick={() => setMode("citizen-login")}
+            className={`rounded-md px-2 py-2 text-xs ${mode === "citizen-login" ? "bg-white/12 text-white" : "text-slate-400"}`}
+          >
+            Citizen Login
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("citizen-register")}
+            className={`rounded-md px-2 py-2 text-xs ${mode === "citizen-register" ? "bg-white/12 text-white" : "text-slate-400"}`}
+          >
+            Citizen Register
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("admin-login")}
+            className={`rounded-md px-2 py-2 text-xs ${mode === "admin-login" ? "bg-white/12 text-white" : "text-slate-400"}`}
+          >
+            Admin Login
+          </button>
+        </div>
+
+        <form
+          className="space-y-3"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            await submitCurrentMode();
+          }}
+        >
+          {mode !== "citizen-register" ? (
+            <>
+              <input
+                type="email"
+                required
+                value={loginEmail}
+                onChange={(event) => setLoginEmail(event.target.value)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                placeholder="Email"
+              />
+              <input
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                placeholder="Password"
+              />
+            </>
+          ) : (
+            <>
+              <input
+                type="text"
+                required
+                value={registerName}
+                onChange={(event) => setRegisterName(event.target.value)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                placeholder="Full name"
+              />
+              <input
+                type="email"
+                required
+                value={registerEmail}
+                onChange={(event) => setRegisterEmail(event.target.value)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                placeholder="Email"
+              />
+              <input
+                type="password"
+                required
+                value={registerPassword}
+                onChange={(event) => setRegisterPassword(event.target.value)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                placeholder="Password"
+              />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <input
+                  type="text"
+                  value={registerPhone}
+                  onChange={(event) => setRegisterPhone(event.target.value)}
+                  className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                  placeholder="Phone (optional)"
+                />
+                <select
+                  value={registerGender}
+                  onChange={(event) =>
+                    setRegisterGender(
+                      event.target.value as "Male" | "Female" | "Other" | "",
+                    )
+                  }
+                  className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-blue-400/60"
+                >
+                  <option value="">Gender (optional)</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <input
+                type="text"
+                value={registerAddress}
+                onChange={(event) => setRegisterAddress(event.target.value)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                placeholder="Address (optional)"
+              />
+            </>
+          )}
+
+          {error ? (
+            <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {error}
+            </p>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="h-10 w-full rounded-lg bg-white text-sm font-semibold text-black transition hover:bg-slate-200 disabled:opacity-70"
+          >
+            {isSubmitting
+              ? "Please wait..."
+              : mode === "citizen-register"
+                ? "Register as Citizen"
+                : mode === "admin-login"
+                  ? "Login as Admin"
+                  : "Login as Citizen"}
+          </button>
+        </form>
       </div>
     </main>
   );
@@ -1158,22 +1783,34 @@ function ManualReportPanel({
   descriptionInput,
   severityInput,
   imageName,
+  uploadedImageUrl,
+  isImageUploading,
+  imageUploadError,
   setLocationInput,
   setDescriptionInput,
   setSeverityInput,
   setImageName,
+  onUploadImage,
   onSubmit,
 }: {
   locationInput: string;
   descriptionInput: string;
   severityInput: Severity;
   imageName: string;
+  uploadedImageUrl: string | null;
+  isImageUploading: boolean;
+  imageUploadError: string | null;
   setLocationInput: (v: string) => void;
   setDescriptionInput: (v: string) => void;
   setSeverityInput: (v: Severity) => void;
   setImageName: (v: string) => void;
+  onUploadImage: (file: File) => Promise<void>;
   onSubmit: () => void;
 }) {
+  const previewUrl = uploadedImageUrl
+    ? toCloudinaryPreview(uploadedImageUrl, 720, 380)
+    : null;
+
   return (
     <div className="rounded-xl border border-white/10 bg-linear-to-br from-[#111520] to-[#0b1327]">
       <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 text-white">
@@ -1232,25 +1869,75 @@ function ManualReportPanel({
 
         <label className="block cursor-pointer rounded-lg border border-dashed border-white/10 bg-black/25 px-3 py-5 text-center text-sm text-slate-300 hover:bg-black/35">
           <Upload className="mx-auto mb-2 h-5 w-5" />
-          <p className="font-medium">Click to upload image</p>
+          <p className="font-medium">
+            {isImageUploading
+              ? "Uploading to Cloudinary..."
+              : "Click to upload image"}
+          </p>
           <p className="mt-1 text-xs text-slate-500">{imageName}</p>
           <input
             className="sr-only"
             type="file"
             accept="image/*"
-            onChange={(event) => {
+            onChange={async (event) => {
               const file = event.target.files?.[0];
               setImageName(file ? file.name : "No image selected");
+              if (file) {
+                await onUploadImage(file);
+              }
             }}
           />
         </label>
 
+        {uploadedImageUrl ? (
+          <div className="space-y-2">
+            <div className="overflow-hidden rounded-lg border border-emerald-400/30 bg-black/30">
+              {previewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={previewUrl}
+                  alt="Uploaded report preview"
+                  className="h-44 w-full object-cover"
+                  onError={(event) => {
+                    const img = event.currentTarget;
+                    if (img.dataset.fallback !== "1" && uploadedImageUrl) {
+                      img.dataset.fallback = "1";
+                      img.src = uploadedImageUrl;
+                      return;
+                    }
+                    img.style.display = "none";
+                  }}
+                />
+              ) : (
+                <div className="flex h-44 items-center justify-center text-xs text-slate-400">
+                  Uploaded image could not be previewed. Use the link below.
+                </div>
+              )}
+            </div>
+
+            <a
+              href={uploadedImageUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-300 underline-offset-4 hover:underline"
+            >
+              Open full uploaded image
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        ) : null}
+
+        {imageUploadError ? (
+          <p className="text-xs text-rose-300">{imageUploadError}</p>
+        ) : null}
+
         <button
           type="button"
           onClick={onSubmit}
+          disabled={isImageUploading}
           className="h-10 w-full rounded-lg bg-white text-sm font-semibold text-black transition hover:bg-slate-200"
         >
-          Submit Report
+          {isImageUploading ? "Please wait..." : "Submit Report"}
         </button>
       </div>
     </div>
@@ -1311,18 +1998,58 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 }
 
 function ReportRow({ report }: { report: CitizenReport }) {
+  const thumbnailUrl = report.imageUrl
+    ? toCloudinaryPreview(report.imageUrl, 288, 168)
+    : null;
+
   return (
     <div className="flex items-start justify-between rounded-lg border border-white/8 bg-black/20 px-3 py-2.5">
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-white">
           {report.title}
         </p>
         <p className="mt-1 line-clamp-2 text-sm text-slate-400">
           {report.description}
         </p>
+        {report.imageUrl ? (
+          <div className="mt-2 overflow-hidden rounded-md border border-white/10 bg-black/40">
+            {thumbnailUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={thumbnailUrl}
+                alt={`Report evidence for ${report.title}`}
+                className="h-28 w-full object-cover"
+                onError={(event) => {
+                  const img = event.currentTarget;
+                  if (img.dataset.fallback !== "1" && report.imageUrl) {
+                    img.dataset.fallback = "1";
+                    img.src = report.imageUrl;
+                    return;
+                  }
+                  img.style.display = "none";
+                }}
+              />
+            ) : (
+              <div className="flex h-28 items-center justify-center text-xs text-slate-400">
+                Image preview unavailable
+              </div>
+            )}
+          </div>
+        ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
           <span>{report.location}</span>
           <span>{report.timestamp}</span>
+          {report.imageUrl ? (
+            <a
+              href={report.imageUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-cyan-300 underline-offset-4 hover:underline"
+            >
+              View image
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
         </div>
       </div>
       <span

@@ -1,7 +1,6 @@
 import Truck from "../models/truckModel.js";
 import TruckLocation from "../models/truckLocationModel.js";
-
-import Truck from "../models/truckModel.js";
+import Collection from "../models/collectionModel.js";
 
 
 export const createTruck = async (req, res) => {
