@@ -173,6 +173,9 @@ export const collectBin = async (req, res) => {
 
     truck.usedCapacity += waste;
     truck.status = truck.usedCapacity >= truck.totalCapacity ? "BUSY" : "IDLE";
+    truck.route = truck.route.filter(
+      (binId) => binId.toString() !== req.params.id
+    );
     await truck.save();
 
     bin.currentLoad = 0;

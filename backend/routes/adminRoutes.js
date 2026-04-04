@@ -22,4 +22,10 @@ router.get("/bins", protect, adminOnly, getBins);
 router.post("/trucks", protect, adminOnly, createTruck);
 router.get("/trucks", protect, adminOnly, getTrucks);
 
+router.put("/complaints/:id", protect, adminOnly, updateComplaint);
+
+router.put("/complaints/:id/respond", protect, adminOnly, respondToComplaint);
+
+router.delete("/complaints/:id", protect, adminOnly, softDeleteComplaint);
+
 export default router;

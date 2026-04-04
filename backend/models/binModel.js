@@ -35,7 +35,7 @@ const binSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["EMPTY", "MEDIUM", "FULL"],
+      enum: ["EMPTY", "MEDIUM", "FULL","ACTIVE","INACTIVE"],
       default: "EMPTY"
     },
 

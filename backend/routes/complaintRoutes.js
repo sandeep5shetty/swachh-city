@@ -11,6 +11,6 @@ const router = express.Router();
 router.post("/", createComplaint);
 router.get("/", getComplaints);
 router.get("/:id", getComplaintById);
-router.delete("/:id", deleteComplaint);
+router.get("/:id", deleteComplaint);
 
 export default router;
