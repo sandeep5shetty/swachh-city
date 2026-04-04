@@ -1,10 +1,12 @@
 import express from "express";
-import { createBin, getBins, updateBin } from "../controllers/binController.js";
+import { collectBin, createBin, getBins, getCollectionHistory, updateBin } from "../controllers/binController.js";
 
 const router = express.Router();
 
 router.post("/", createBin);
 router.get("/", getBins);
 router.put("/:id", updateBin);
+router.post("/:id/collect", collectBin);
+router.get("/collections/history", getCollectionHistory);
 
 export default router;

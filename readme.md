@@ -142,6 +142,111 @@ All protected routes require JWT token:
 ```
 Authorization: Bearer <token>
 ```
+## 🗑️ Bin Management APIs
+
+### 🔹 Create Bin
+
+```bash
+POST /api/bins
+```
+
+---
+
+### 🔹 Get All Bins
+
+```bash
+GET /api/bins
+```
+
+---
+
+### 🔹 Get Bin by ID
+
+```bash
+GET /api/bins/:id
+```
+
+---
+
+### 🔹 Update Bin
+
+```bash
+PUT /api/bins/:id
+```
+
+---
+
+### 🔹 Collect Garbage from Bin (Truck Pickup)
+
+```bash
+POST /api/bins/:id/collect
+```
+
+---
+
+---
+
+## 🚛 Truck Management APIs
+
+### 🔹 Create Truck
+
+```bash
+POST /api/trucks
+```
+
+---
+
+### 🔹 Get All Trucks
+
+```bash
+GET /api/trucks
+```
+
+---
+
+### 🔹 Get Truck by ID
+
+```bash
+GET /api/trucks/:id
+```
+
+---
+
+### 🔹 Update Truck
+
+```bash
+PUT /api/trucks/:id
+```
+
+---
+
+### 🔹 Update Truck Location
+
+```bash
+PUT /api/trucks/:id/location
+```
+
+---
+
+### 🔹 Empty Truck (Dump Yard)
+
+```bash
+POST /api/trucks/:id/empty
+```
+
+---
+
+### 🔹 Get Truck History by Date
+
+```bash
+GET /api/trucks/:id/history?date=YYYY-MM-DD
+```
+
+---
+
+## 🔐 Note
+
+Some routes may require authentication (Admin access).
 
 ---
 
