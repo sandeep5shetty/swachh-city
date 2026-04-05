@@ -186,6 +186,25 @@ type BackendTruck = {
   route?: Array<string | { _id?: string; binId?: string; area?: string }>;
 };
 
+type CreateTruckInput = {
+  driverName: string;
+  regNo: string;
+  type: "3-Wheeler" | "2-Axle-Mini" | "2-Axle-Standard";
+  totalCapacity: number;
+  latitude?: number;
+  longitude?: number;
+};
+
+type CreateBinInput = {
+  binId: string;
+  capacity: number;
+  area?: string;
+  landmark?: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+};
+
 type TruckLoadSummary = {
   usedCapacity: number;
   remainingCapacity: number;
@@ -396,7 +415,7 @@ export function WasteDashboard() {
   const [authReady, setAuthReady] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authRole, setAuthRole] = useState<AuthRole | null>(null);
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [, setAuthUserId] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>("citizen-login");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -461,6 +480,7 @@ export function WasteDashboard() {
 
   const alertedBinsRef = useRef<Set<string>>(new Set());
   const notifiedComplaintsRef = useRef<Set<string>>(new Set());
+  const alertsPrimedRef = useRef(false);
 
   useEffect(() => {
     const token = window.localStorage.getItem("swachh_auth_token");
@@ -496,6 +516,15 @@ export function WasteDashboard() {
       setAuthMode(mode);
     }
   }, []);
+
+  useEffect(() => {
+    alertedBinsRef.current.clear();
+    notifiedComplaintsRef.current.clear();
+    alertsPrimedRef.current = false;
+    setDriverTasks([]);
+    setNotifications([]);
+    setToastQueue([]);
+  }, [authToken, authRole]);
 
   function persistSession(
     payload: BackendAuthResponse,
@@ -670,6 +699,9 @@ export function WasteDashboard() {
       }
       if (item.key === "driver") {
         return authRole === "driver";
+      }
+      if (item.key === "fleet" || item.key === "analytics") {
+        return authRole === "admin";
       }
       return true;
     });
@@ -1305,7 +1337,7 @@ export function WasteDashboard() {
   );
 
   const assignTaskFromBin = useCallback(
-    (bin: TwinBin) => {
+    (bin: TwinBin, emitNotifications = true) => {
       const alreadyOpen = driverTasks.some(
         (task) =>
           task.source === "bin" &&
@@ -1344,8 +1376,13 @@ export function WasteDashboard() {
         distanceKm: nearest ? Number(nearest.distanceKm.toFixed(2)) : null,
       });
 
-      pushNotification(`🚨 Bin ${bin.id} is full near ${bin.label}`, priority);
-      if (task.assignedTruckId && nearest) {
+      if (emitNotifications) {
+        pushNotification(
+          `🚨 Bin ${bin.id} is full near ${bin.label}`,
+          priority,
+        );
+      }
+      if (emitNotifications && task.assignedTruckId && nearest) {
         pushNotification(
           `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
           priority,
@@ -1370,7 +1407,7 @@ export function WasteDashboard() {
   );
 
   const assignTaskFromComplaint = useCallback(
-    (report: CitizenReport, coords: GeoPoint) => {
+    (report: CitizenReport, coords: GeoPoint, emitNotifications = true) => {
       const alreadyOpen = driverTasks.some(
         (task) =>
           task.source === "complaint" &&
@@ -1410,11 +1447,13 @@ export function WasteDashboard() {
         distanceKm: nearest ? Number(nearest.distanceKm.toFixed(2)) : null,
       });
 
-      pushNotification(
-        `📍 Complaint reported near ${report.location}`,
-        priority,
-      );
-      if (task.assignedTruckId && nearest) {
+      if (emitNotifications) {
+        pushNotification(
+          `📍 Complaint reported near ${report.location}`,
+          priority,
+        );
+      }
+      if (emitNotifications && task.assignedTruckId && nearest) {
         pushNotification(
           `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
           priority,
@@ -1439,6 +1478,51 @@ export function WasteDashboard() {
   );
 
   useEffect(() => {
+    if (isLoadingData || alertsPrimedRef.current) {
+      return;
+    }
+
+    geoBins.forEach((bin) => {
+      if (bin.fill >= 80 && !alertedBinsRef.current.has(bin.id)) {
+        alertedBinsRef.current.add(bin.id);
+        assignTaskFromBin(bin, false);
+      }
+      if (bin.fill < 70 && alertedBinsRef.current.has(bin.id)) {
+        alertedBinsRef.current.delete(bin.id);
+      }
+    });
+
+    reports.forEach((report) => {
+      if (notifiedComplaintsRef.current.has(report.id)) {
+        return;
+      }
+
+      const parsed = parseLatLng(report.location);
+      const coords = parsed
+        ? { latitude: parsed.lat, longitude: parsed.lng }
+        : {
+            latitude: DEFAULT_CITY_CENTER[1],
+            longitude: DEFAULT_CITY_CENTER[0],
+          };
+
+      notifiedComplaintsRef.current.add(report.id);
+      assignTaskFromComplaint(report, coords, false);
+    });
+
+    alertsPrimedRef.current = true;
+  }, [
+    assignTaskFromBin,
+    assignTaskFromComplaint,
+    geoBins,
+    isLoadingData,
+    reports,
+  ]);
+
+  useEffect(() => {
+    if (!alertsPrimedRef.current) {
+      return;
+    }
+
     geoBins.forEach((bin) => {
       if (bin.fill >= 80 && !alertedBinsRef.current.has(bin.id)) {
         alertedBinsRef.current.add(bin.id);
@@ -1451,6 +1535,10 @@ export function WasteDashboard() {
   }, [assignTaskFromBin, geoBins]);
 
   useEffect(() => {
+    if (!alertsPrimedRef.current) {
+      return;
+    }
+
     reports.forEach((report) => {
       if (notifiedComplaintsRef.current.has(report.id)) {
         return;
@@ -1528,6 +1616,9 @@ export function WasteDashboard() {
         headers: { Authorization: `Bearer ${authToken}` },
         body: JSON.stringify({
           issueType: `${severityInput.toUpperCase()}: ${descriptionInput.trim()}`,
+          description: descriptionInput.trim(),
+          severity: severityInput.toUpperCase(),
+          address: locationInput.trim(),
           image: uploadedImageUrl ?? undefined,
           location: locationPayload,
         }),
@@ -1820,6 +1911,88 @@ export function WasteDashboard() {
     }
   }
 
+  async function createTruckFromAdmin(input: CreateTruckInput) {
+    if (authRole !== "admin" || !authToken) {
+      setDataError("Only admin can create trucks.");
+      return false;
+    }
+
+    setFleetActionPending(true);
+    try {
+      await fetchJson<{ message: string }>("/api/admin/trucks", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({
+          driverName: input.driverName,
+          regNo: input.regNo,
+          type: input.type,
+          totalCapacity: input.totalCapacity,
+          currentLocation:
+            typeof input.latitude === "number" &&
+            typeof input.longitude === "number"
+              ? { lat: input.latitude, lng: input.longitude }
+              : undefined,
+        }),
+      });
+
+      setFleetActionMessage(`Truck ${input.regNo} created successfully.`);
+      setDataError(null);
+      await loadOperationalData();
+      await fetchFleetAvailableTrucks();
+      return true;
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Truck creation failed: ${error.message}`
+          : "Truck creation failed",
+      );
+      return false;
+    } finally {
+      setFleetActionPending(false);
+    }
+  }
+
+  async function createBinFromAdmin(input: CreateBinInput) {
+    if (authRole !== "admin" || !authToken) {
+      setDataError("Only admin can create bins.");
+      return false;
+    }
+
+    setFleetActionPending(true);
+    try {
+      await fetchJson<{ message: string }>("/api/admin/bins", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({
+          binId: input.binId,
+          capacity: input.capacity,
+          area: input.area,
+          landmark: input.landmark,
+          address: input.address,
+          location:
+            typeof input.latitude === "number" &&
+            typeof input.longitude === "number"
+              ? { lat: input.latitude, lng: input.longitude }
+              : undefined,
+        }),
+      });
+
+      setFleetActionMessage(`Bin ${input.binId} created successfully.`);
+      setDataError(null);
+      await loadOperationalData();
+      return true;
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Bin creation failed: ${error.message}`
+          : "Bin creation failed",
+      );
+      return false;
+    } finally {
+      setFleetActionPending(false);
+    }
+  }
+
   useEffect(() => {
     if (authRole !== "admin") {
       return;
@@ -1946,11 +2119,6 @@ export function WasteDashboard() {
                           ? "Fleet Execution"
                           : "Field Reporter"}
                     </p>
-                    {authUserId ? (
-                      <p className="mt-2 break-all rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[11px] font-medium text-slate-400">
-                        ID: {authUserId}
-                      </p>
-                    ) : null}
                   </div>
                 </div>
               </CardContent>
@@ -2373,7 +2541,7 @@ export function WasteDashboard() {
               />
             ) : null}
 
-            {activeNav === "fleet" ? (
+            {activeNav === "fleet" && authRole === "admin" ? (
               <section className="space-y-4">
                 <FleetOperationsPanel
                   trucks={geoTrucks}
@@ -2397,6 +2565,8 @@ export function WasteDashboard() {
                   onFetchLoad={fetchFleetLoad}
                   onFetchHistory={fetchFleetHistory}
                   onRefreshAvailable={fetchFleetAvailableTrucks}
+                  onCreateTruck={createTruckFromAdmin}
+                  onCreateBin={createBinFromAdmin}
                 />
               </section>
             ) : null}
@@ -2431,7 +2601,7 @@ export function WasteDashboard() {
               </section>
             ) : null}
 
-            {activeNav === "analytics" ? (
+            {activeNav === "analytics" && authRole === "admin" ? (
               <section className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
                 <div className="rounded-xl border border-white/10 bg-[#111520] p-4">
                   <h3 className="text-xl font-semibold text-white">
@@ -2596,9 +2766,6 @@ function AuthPanel({
             </h1>
             <p className="mt-1.5 text-sm font-medium text-cyan-200/85">
               Login / Register
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              API: {BACKEND_BASE_URL}
             </p>
           </div>
         </div>
@@ -3100,6 +3267,8 @@ function FleetOperationsPanel({
   onFetchLoad,
   onFetchHistory,
   onRefreshAvailable,
+  onCreateTruck,
+  onCreateBin,
 }: {
   trucks: Array<FleetTruck & GeoPoint>;
   bins: Array<TwinBin & GeoPoint>;
@@ -3126,11 +3295,29 @@ function FleetOperationsPanel({
   onFetchLoad: (truckId: string) => Promise<void>;
   onFetchHistory: (truckId: string) => Promise<void>;
   onRefreshAvailable: () => Promise<void>;
+  onCreateTruck: (input: CreateTruckInput) => Promise<boolean>;
+  onCreateBin: (input: CreateBinInput) => Promise<boolean>;
 }) {
   const [selectedDriverId, setSelectedDriverId] = useState("");
   const [locationLatInput, setLocationLatInput] = useState("");
   const [locationLngInput, setLocationLngInput] = useState("");
   const [routeBinBackendIds, setRouteBinBackendIds] = useState<string[]>([]);
+  const [newTruckRegNo, setNewTruckRegNo] = useState("");
+  const [newTruckDriverName, setNewTruckDriverName] = useState("");
+  const [newTruckType, setNewTruckType] = useState<
+    "3-Wheeler" | "2-Axle-Mini" | "2-Axle-Standard"
+  >("2-Axle-Mini");
+  const [newTruckCapacity, setNewTruckCapacity] = useState("");
+  const [newTruckLat, setNewTruckLat] = useState("");
+  const [newTruckLng, setNewTruckLng] = useState("");
+
+  const [newBinId, setNewBinId] = useState("");
+  const [newBinCapacity, setNewBinCapacity] = useState("");
+  const [newBinArea, setNewBinArea] = useState("");
+  const [newBinLandmark, setNewBinLandmark] = useState("");
+  const [newBinAddress, setNewBinAddress] = useState("");
+  const [newBinLat, setNewBinLat] = useState("");
+  const [newBinLng, setNewBinLng] = useState("");
 
   const assignableDrivers = useMemo(() => {
     const byId = new globalThis.Map<
@@ -3262,6 +3449,207 @@ function FleetOperationsPanel({
 
           {isAdmin ? (
             <div className="mt-4 space-y-4">
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="mb-2 text-sm font-medium text-white">
+                  Create Truck (POST /api/admin/trucks)
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    type="text"
+                    value={newTruckRegNo}
+                    onChange={(event) => setNewTruckRegNo(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Reg No (required)"
+                  />
+                  <input
+                    type="text"
+                    value={newTruckDriverName}
+                    onChange={(event) =>
+                      setNewTruckDriverName(event.target.value)
+                    }
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Driver name (required)"
+                  />
+                  <select
+                    value={newTruckType}
+                    onChange={(event) =>
+                      setNewTruckType(
+                        event.target.value as
+                          | "3-Wheeler"
+                          | "2-Axle-Mini"
+                          | "2-Axle-Standard",
+                      )
+                    }
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                  >
+                    <option value="3-Wheeler">3-Wheeler</option>
+                    <option value="2-Axle-Mini">2-Axle-Mini</option>
+                    <option value="2-Axle-Standard">2-Axle-Standard</option>
+                  </select>
+                  <input
+                    type="number"
+                    min={1}
+                    value={newTruckCapacity}
+                    onChange={(event) => setNewTruckCapacity(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Total capacity (required)"
+                  />
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={newTruckLat}
+                    onChange={(event) => setNewTruckLat(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Latitude (optional)"
+                  />
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={newTruckLng}
+                    onChange={(event) => setNewTruckLng(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Longitude (optional)"
+                  />
+                </div>
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    size="sm"
+                    disabled={
+                      pending ||
+                      !newTruckRegNo.trim() ||
+                      !newTruckDriverName.trim() ||
+                      !newTruckCapacity.trim() ||
+                      Number.isNaN(Number(newTruckCapacity)) ||
+                      Number(newTruckCapacity) <= 0
+                    }
+                    onClick={async () => {
+                      const success = await onCreateTruck({
+                        regNo: newTruckRegNo.trim(),
+                        driverName: newTruckDriverName.trim(),
+                        type: newTruckType,
+                        totalCapacity: Number(newTruckCapacity),
+                        latitude: newTruckLat.trim()
+                          ? Number(newTruckLat)
+                          : undefined,
+                        longitude: newTruckLng.trim()
+                          ? Number(newTruckLng)
+                          : undefined,
+                      });
+
+                      if (success) {
+                        setNewTruckRegNo("");
+                        setNewTruckDriverName("");
+                        setNewTruckType("2-Axle-Mini");
+                        setNewTruckCapacity("");
+                        setNewTruckLat("");
+                        setNewTruckLng("");
+                      }
+                    }}
+                  >
+                    Create Truck
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="mb-2 text-sm font-medium text-white">
+                  Create Bin (POST /api/admin/bins)
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    type="text"
+                    value={newBinId}
+                    onChange={(event) => setNewBinId(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Bin ID (required)"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    value={newBinCapacity}
+                    onChange={(event) => setNewBinCapacity(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Capacity (required)"
+                  />
+                  <input
+                    type="text"
+                    value={newBinArea}
+                    onChange={(event) => setNewBinArea(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Area (optional)"
+                  />
+                  <input
+                    type="text"
+                    value={newBinLandmark}
+                    onChange={(event) => setNewBinLandmark(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Landmark (optional)"
+                  />
+                  <input
+                    type="text"
+                    value={newBinAddress}
+                    onChange={(event) => setNewBinAddress(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none sm:col-span-2"
+                    placeholder="Address (optional)"
+                  />
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={newBinLat}
+                    onChange={(event) => setNewBinLat(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Latitude (optional)"
+                  />
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={newBinLng}
+                    onChange={(event) => setNewBinLng(event.target.value)}
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Longitude (optional)"
+                  />
+                </div>
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    size="sm"
+                    disabled={
+                      pending ||
+                      !newBinId.trim() ||
+                      !newBinCapacity.trim() ||
+                      Number.isNaN(Number(newBinCapacity)) ||
+                      Number(newBinCapacity) <= 0
+                    }
+                    onClick={async () => {
+                      const success = await onCreateBin({
+                        binId: newBinId.trim(),
+                        capacity: Number(newBinCapacity),
+                        area: newBinArea.trim() || undefined,
+                        landmark: newBinLandmark.trim() || undefined,
+                        address: newBinAddress.trim() || undefined,
+                        latitude: newBinLat.trim()
+                          ? Number(newBinLat)
+                          : undefined,
+                        longitude: newBinLng.trim()
+                          ? Number(newBinLng)
+                          : undefined,
+                      });
+
+                      if (success) {
+                        setNewBinId("");
+                        setNewBinCapacity("");
+                        setNewBinArea("");
+                        setNewBinLandmark("");
+                        setNewBinAddress("");
+                        setNewBinLat("");
+                        setNewBinLng("");
+                      }
+                    }}
+                  >
+                    Create Bin
+                  </Button>
+                </div>
+              </div>
+
               <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                 <p className="mb-2 text-sm font-medium text-white">
                   Driver Assignment (Route: POST /api/trucks/:id/assign-driver)
