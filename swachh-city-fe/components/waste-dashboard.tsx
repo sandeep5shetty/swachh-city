@@ -39,6 +39,7 @@ type NavKey =
   | "dashboard"
   | "live-map"
   | "fleet"
+  | "complaints"
   | "reports"
   | "analytics"
   | "driver";
@@ -105,6 +106,7 @@ type CitizenReport = {
   title: string;
   description: string;
   location: string;
+  geo?: GeoPoint;
   severity: Severity;
   status: ReportStatus;
   timestamp: string;
@@ -222,6 +224,7 @@ type BackendComplaint = {
   issueType?: string;
   image?: string;
   location?: { lat?: number; lng?: number };
+  address?: string;
   createdAt?: string;
   description?: string;
   severity?: string;
@@ -328,6 +331,7 @@ const navItems: Array<{
   { key: "live-map", label: "Live Map", icon: MapIcon },
   { key: "driver", label: "Driver Ops", icon: Zap },
   { key: "fleet", label: "Fleet Management", icon: Truck },
+  { key: "complaints", label: "All Complaints", icon: CircleAlert },
   { key: "reports", label: "Citizen Reports", icon: ShieldAlert },
   { key: "analytics", label: "Analytics", icon: ChartNoAxesCombined },
 ];
@@ -377,6 +381,13 @@ function toDistanceKm(a: GeoPoint, b: GeoPoint) {
 
 function makeId(prefix: string) {
   return `${prefix}-${Math.floor(Date.now() + Math.random() * 10000)}`;
+}
+
+function stripMongoIdSuffix(input?: string) {
+  if (!input) {
+    return "";
+  }
+  return input.replace(/\s*\([a-f\d]{24}\)\s*$/i, "").trim();
 }
 
 function toWardId(ward: Pick<BbmpWardRecord, "wardNumber">) {
@@ -441,6 +452,18 @@ export function WasteDashboard() {
   const [selectedBinId, setSelectedBinId] = useState<string | null>(null);
   const [selectedTruckId, setSelectedTruckId] = useState<string | null>(null);
   const [reportFilter, setReportFilter] = useState<"all" | ReportStatus>("all");
+  const [adminComplaintSearch, setAdminComplaintSearch] = useState("");
+  const [adminComplaintStatusFilter, setAdminComplaintStatusFilter] = useState<
+    "all" | ReportStatus
+  >("all");
+  const [adminComplaintSeverityFilter, setAdminComplaintSeverityFilter] =
+    useState<"all" | Severity>("all");
+  const [adminComplaintUpdatingId, setAdminComplaintUpdatingId] = useState<
+    string | null
+  >(null);
+  const [adminComplaintMessage, setAdminComplaintMessage] = useState<
+    string | null
+  >(null);
 
   const [mapViewport, setMapViewport] = useState<Partial<MapViewport>>({
     center: DEFAULT_CITY_CENTER,
@@ -481,6 +504,8 @@ export function WasteDashboard() {
   const alertedBinsRef = useRef<Set<string>>(new Set());
   const notifiedComplaintsRef = useRef<Set<string>>(new Set());
   const alertsPrimedRef = useRef(false);
+  const loginToastSilencedUntilRef = useRef(0);
+  const notificationDedupeRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const token = window.localStorage.getItem("swachh_auth_token");
@@ -521,6 +546,8 @@ export function WasteDashboard() {
     alertedBinsRef.current.clear();
     notifiedComplaintsRef.current.clear();
     alertsPrimedRef.current = false;
+    notificationDedupeRef.current.clear();
+    loginToastSilencedUntilRef.current = Date.now() + 15000;
     setDriverTasks([]);
     setNotifications([]);
     setToastQueue([]);
@@ -700,7 +727,11 @@ export function WasteDashboard() {
       if (item.key === "driver") {
         return authRole === "driver";
       }
-      if (item.key === "fleet" || item.key === "analytics") {
+      if (
+        item.key === "fleet" ||
+        item.key === "analytics" ||
+        item.key === "complaints"
+      ) {
         return authRole === "admin";
       }
       return true;
@@ -789,6 +820,8 @@ export function WasteDashboard() {
     const mappedTrucks = backendTrucks.map((truck, index) => {
       const usedCapacity = truck.usedCapacity ?? 0;
       const totalCapacity = truck.totalCapacity ?? 1;
+      const cleanedDriverName = stripMongoIdSuffix(truck.driverName);
+      const cleanedDriverAccountName = stripMongoIdSuffix(truck.driver?.name);
       const route =
         binIds.length >= 4
           ? [
@@ -802,9 +835,9 @@ export function WasteDashboard() {
 
       return {
         id: truck._id,
-        name: `${truck.regNo ?? "Truck"}${truck.driverName ? ` · ${truck.driverName}` : ""}`,
+        name: `${truck.regNo ?? "Truck"}${cleanedDriverName ? ` · ${cleanedDriverName}` : ""}`,
         driverId: truck.driver?._id,
-        driverDisplayName: truck.driver?.name ?? truck.driverName,
+        driverDisplayName: cleanedDriverAccountName || cleanedDriverName,
         driverEmail: truck.driver?.email,
         status: truck.status === "BUSY" ? "busy" : "idle",
         capacity: Math.max(
@@ -832,8 +865,16 @@ export function WasteDashboard() {
       .map((complaint, index) => {
         const lat = complaint.location?.lat;
         const lng = complaint.location?.lng;
-        const locationLabel =
-          typeof lat === "number" && typeof lng === "number"
+        const normalizedSeverity = (complaint.severity ?? "")
+          .toString()
+          .toLowerCase();
+        const normalizedStatus = (complaint.status ?? "")
+          .toString()
+          .toLowerCase()
+          .replace(/_/g, "-");
+        const locationLabel = complaint.address?.trim()
+          ? complaint.address.trim()
+          : typeof lat === "number" && typeof lng === "number"
             ? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
             : "Location unavailable";
 
@@ -847,14 +888,18 @@ export function WasteDashboard() {
             complaint.issueType ??
             "Citizen has reported a sanitation issue.",
           location: locationLabel,
+          geo:
+            typeof lat === "number" && typeof lng === "number"
+              ? { latitude: lat, longitude: lng }
+              : undefined,
           severity:
-            complaint.severity === "high" || complaint.severity === "medium"
-              ? complaint.severity
+            normalizedSeverity === "high" || normalizedSeverity === "medium"
+              ? normalizedSeverity
               : inferSeverity(complaint.issueType),
           status:
-            complaint.status === "resolved"
+            normalizedStatus === "resolved"
               ? "resolved"
-              : complaint.status === "in-progress"
+              : normalizedStatus === "in-progress"
                 ? "in-progress"
                 : "pending",
           timestamp: formatRelativeTime(complaint.createdAt),
@@ -1037,6 +1082,31 @@ export function WasteDashboard() {
     return reports.filter((report) => report.status === reportFilter);
   }, [reportFilter, reports]);
 
+  const filteredAdminComplaints = useMemo(() => {
+    return reports.filter((report) => {
+      const matchesStatus =
+        adminComplaintStatusFilter === "all" ||
+        report.status === adminComplaintStatusFilter;
+      const matchesSeverity =
+        adminComplaintSeverityFilter === "all" ||
+        report.severity === adminComplaintSeverityFilter;
+      const q = adminComplaintSearch.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        report.title.toLowerCase().includes(q) ||
+        report.description.toLowerCase().includes(q) ||
+        report.location.toLowerCase().includes(q) ||
+        report.id.toLowerCase().includes(q);
+
+      return matchesStatus && matchesSeverity && matchesSearch;
+    });
+  }, [
+    adminComplaintSearch,
+    adminComplaintSeverityFilter,
+    adminComplaintStatusFilter,
+    reports,
+  ]);
+
   const wardNodes = useMemo(() => {
     return BBMP_WARDS.map(
       (ward) =>
@@ -1102,12 +1172,12 @@ export function WasteDashboard() {
         if (report.status === "resolved") {
           return false;
         }
-        const parsed = parseLatLng(report.location);
-        if (!parsed) {
+        const coords = report.geo;
+        if (!coords) {
           return false;
         }
         const nearestWard = resolveNearestWard(
-          { latitude: parsed.lat, longitude: parsed.lng },
+          { latitude: coords.latitude, longitude: coords.longitude },
           BBMP_WARDS,
         );
         return nearestWard ? toWardId(nearestWard) === ward.id : false;
@@ -1179,7 +1249,19 @@ export function WasteDashboard() {
   }, [driverTasks, geoTrucks]);
 
   const pushNotification = useCallback(
-    (message: string, priority: TaskPriority) => {
+    (
+      message: string,
+      priority: TaskPriority,
+      options?: { showToast?: boolean; dedupeKey?: string },
+    ) => {
+      const dedupeKey = options?.dedupeKey ?? message;
+      const now = Date.now();
+      const lastSeen = notificationDedupeRef.current.get(dedupeKey) ?? 0;
+      if (now - lastSeen < 20000) {
+        return;
+      }
+      notificationDedupeRef.current.set(dedupeKey, now);
+
       const item: DriverNotification = {
         id: makeId("notif"),
         message,
@@ -1189,7 +1271,13 @@ export function WasteDashboard() {
       };
 
       setNotifications((prev) => [item, ...prev].slice(0, 50));
-      setToastQueue((prev) => [item, ...prev].slice(0, 4));
+      const shouldShowToast =
+        (options?.showToast ?? true) &&
+        Date.now() > loginToastSilencedUntilRef.current;
+
+      if (shouldShowToast) {
+        setToastQueue((prev) => [item, ...prev].slice(0, 4));
+      }
     },
     [],
   );
@@ -1380,12 +1468,14 @@ export function WasteDashboard() {
         pushNotification(
           `🚨 Bin ${bin.id} is full near ${bin.label}`,
           priority,
+          { showToast: false, dedupeKey: `bin-alert-${bin.id}` },
         );
       }
       if (emitNotifications && task.assignedTruckId && nearest) {
         pushNotification(
           `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
           priority,
+          { showToast: false, dedupeKey: `bin-assigned-${bin.id}` },
         );
         void triggerDriverEmailAlert({
           truckId: nearest.truck.id,
@@ -1451,12 +1541,14 @@ export function WasteDashboard() {
         pushNotification(
           `📍 Complaint reported near ${report.location}`,
           priority,
+          { showToast: false, dedupeKey: `complaint-alert-${report.id}` },
         );
       }
       if (emitNotifications && task.assignedTruckId && nearest) {
         pushNotification(
           `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
           priority,
+          { showToast: false, dedupeKey: `complaint-assigned-${report.id}` },
         );
         void triggerDriverEmailAlert({
           truckId: nearest.truck.id,
@@ -1498,12 +1590,14 @@ export function WasteDashboard() {
       }
 
       const parsed = parseLatLng(report.location);
-      const coords = parsed
-        ? { latitude: parsed.lat, longitude: parsed.lng }
-        : {
-            latitude: DEFAULT_CITY_CENTER[1],
-            longitude: DEFAULT_CITY_CENTER[0],
-          };
+      const coords = report.geo
+        ? report.geo
+        : parsed
+          ? { latitude: parsed.lat, longitude: parsed.lng }
+          : {
+              latitude: DEFAULT_CITY_CENTER[1],
+              longitude: DEFAULT_CITY_CENTER[0],
+            };
 
       notifiedComplaintsRef.current.add(report.id);
       assignTaskFromComplaint(report, coords, false);
@@ -1545,12 +1639,14 @@ export function WasteDashboard() {
       }
 
       const parsed = parseLatLng(report.location);
-      const coords = parsed
-        ? { latitude: parsed.lat, longitude: parsed.lng }
-        : {
-            latitude: DEFAULT_CITY_CENTER[1],
-            longitude: DEFAULT_CITY_CENTER[0],
-          };
+      const coords = report.geo
+        ? report.geo
+        : parsed
+          ? { latitude: parsed.lat, longitude: parsed.lng }
+          : {
+              latitude: DEFAULT_CITY_CENTER[1],
+              longitude: DEFAULT_CITY_CENTER[0],
+            };
 
       notifiedComplaintsRef.current.add(report.id);
       assignTaskFromComplaint(report, coords);
@@ -1726,14 +1822,19 @@ export function WasteDashboard() {
       >("/api/trucks/available");
       const list = Array.isArray(response) ? response : (response.data ?? []);
       setFleetAvailableTruckIds(list.map((truck) => truck._id));
+      setFleetActionMessage(null);
     } catch (error) {
-      setDataError(
+      const fallbackAvailable = trucks
+        .filter((truck) => truck.status === "idle")
+        .map((truck) => truck.id);
+      setFleetAvailableTruckIds(fallbackAvailable);
+      setFleetActionMessage(
         error instanceof Error
-          ? `Failed to load available trucks: ${error.message}`
-          : "Failed to load available trucks",
+          ? `Live available-truck endpoint unavailable (${error.message}). Using current fleet snapshot.`
+          : "Live available-truck endpoint unavailable. Using current fleet snapshot.",
       );
     }
-  }, [authRole]);
+  }, [authRole, trucks]);
 
   async function fetchFleetLoad(truckId: string) {
     try {
@@ -1993,6 +2094,49 @@ export function WasteDashboard() {
     }
   }
 
+  async function updateComplaintStatusFromAdmin(
+    complaintId: string,
+    nextStatus: ReportStatus,
+  ) {
+    if (authRole !== "admin" || !authToken) {
+      setDataError("Only admin can update complaint status.");
+      return;
+    }
+
+    setAdminComplaintUpdatingId(complaintId);
+    setAdminComplaintMessage(null);
+
+    try {
+      const backendStatus =
+        nextStatus === "in-progress"
+          ? "IN_PROGRESS"
+          : nextStatus.toUpperCase();
+
+      await fetchJson<{ message: string }>(
+        `/api/admin/complaints/${complaintId}/respond`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${authToken}` },
+          body: JSON.stringify({ status: backendStatus }),
+        },
+      );
+
+      setAdminComplaintMessage(
+        `Complaint ${complaintId.slice(-6)} moved to ${nextStatus}.`,
+      );
+      setDataError(null);
+      await loadOperationalData();
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to update complaint status: ${error.message}`
+          : "Failed to update complaint status",
+      );
+    } finally {
+      setAdminComplaintUpdatingId(null);
+    }
+  }
+
   useEffect(() => {
     if (authRole !== "admin") {
       return;
@@ -2159,6 +2303,7 @@ export function WasteDashboard() {
               {activeNav === "live-map" && "Digital Twin Live Map"}
               {activeNav === "driver" && "Driver Dispatch Center"}
               {activeNav === "fleet" && "Fleet Operations"}
+              {activeNav === "complaints" && "All Complaints"}
               {activeNav === "reports" && "Citizen Reports Center"}
               {activeNav === "analytics" && "Analytics Dashboard"}
             </h1>
@@ -2567,6 +2712,23 @@ export function WasteDashboard() {
                   onRefreshAvailable={fetchFleetAvailableTrucks}
                   onCreateTruck={createTruckFromAdmin}
                   onCreateBin={createBinFromAdmin}
+                />
+              </section>
+            ) : null}
+
+            {activeNav === "complaints" && authRole === "admin" ? (
+              <section className="space-y-4">
+                <AdminComplaintsPanel
+                  reports={filteredAdminComplaints}
+                  searchValue={adminComplaintSearch}
+                  statusFilter={adminComplaintStatusFilter}
+                  severityFilter={adminComplaintSeverityFilter}
+                  onSearchChange={setAdminComplaintSearch}
+                  onStatusFilterChange={setAdminComplaintStatusFilter}
+                  onSeverityFilterChange={setAdminComplaintSeverityFilter}
+                  onUpdateStatus={updateComplaintStatusFromAdmin}
+                  updatingId={adminComplaintUpdatingId}
+                  message={adminComplaintMessage}
                 />
               </section>
             ) : null}
@@ -3123,7 +3285,7 @@ function AdminEmailAlertPanel({
             <option value="">Select truck</option>
             {trucks.map((truck) => (
               <option key={truck.id} value={truck.id}>
-                {truck.name} ({truck.id})
+                {stripMongoIdSuffix(truck.name)}
               </option>
             ))}
           </select>
@@ -4475,6 +4637,143 @@ function ReportsPanel({
             No reports for the selected filter.
           </p>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function AdminComplaintsPanel({
+  reports,
+  searchValue,
+  statusFilter,
+  severityFilter,
+  onSearchChange,
+  onStatusFilterChange,
+  onSeverityFilterChange,
+  onUpdateStatus,
+  updatingId,
+  message,
+}: {
+  reports: CitizenReport[];
+  searchValue: string;
+  statusFilter: "all" | ReportStatus;
+  severityFilter: "all" | Severity;
+  onSearchChange: (value: string) => void;
+  onStatusFilterChange: (value: "all" | ReportStatus) => void;
+  onSeverityFilterChange: (value: "all" | Severity) => void;
+  onUpdateStatus: (complaintId: string, nextStatus: ReportStatus) => Promise<void>;
+  updatingId: string | null;
+  message: string | null;
+}) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#111520]">
+      <div className="border-b border-white/10 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-2xl font-semibold text-white">
+            Complaint Control Center
+          </h3>
+          <Badge tone="info">{reports.length} matched</Badge>
+        </div>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <input
+            value={searchValue}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Search by complaint id, location, title"
+            className="h-10 rounded-lg border border-white/10 bg-black/25 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 sm:col-span-2"
+          />
+
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              value={statusFilter}
+              onChange={(event) =>
+                onStatusFilterChange(
+                  event.target.value as "all" | ReportStatus,
+                )
+              }
+              className="h-10 rounded-lg border border-white/10 bg-black/25 px-2 text-sm text-slate-100 outline-none"
+            >
+              <option value="all">All status</option>
+              <option value="pending">Pending</option>
+              <option value="in-progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+            </select>
+
+            <select
+              value={severityFilter}
+              onChange={(event) =>
+                onSeverityFilterChange(event.target.value as "all" | Severity)
+              }
+              className="h-10 rounded-lg border border-white/10 bg-black/25 px-2 text-sm text-slate-100 outline-none"
+            >
+              <option value="all">All severity</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+        </div>
+
+        {message ? (
+          <p className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+            {message}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="max-h-[640px] space-y-3 overflow-y-auto p-4">
+        {!reports.length ? (
+          <p className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-400">
+            No complaints match your search/filter criteria.
+          </p>
+        ) : (
+          reports.map((report) => (
+            <div
+              key={report.id}
+              className="rounded-lg border border-white/8 bg-black/20 px-3 py-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-white">{report.title}</p>
+                  <p className="mt-1 text-xs text-slate-500">ID: {report.id}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${report.severity === "high" ? "bg-rose-500/18 text-rose-300" : report.severity === "medium" ? "bg-amber-500/16 text-amber-300" : "bg-emerald-500/16 text-emerald-300"}`}
+                  >
+                    {report.severity}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${report.status === "pending" ? "bg-rose-500/18 text-rose-300" : report.status === "in-progress" ? "bg-amber-500/16 text-amber-300" : "bg-emerald-500/16 text-emerald-300"}`}
+                  >
+                    {report.status}
+                  </span>
+                </div>
+              </div>
+
+              <p className="mt-2 text-sm text-slate-300">{report.description}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {report.location} · {report.timestamp}
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(["pending", "in-progress", "resolved"] as const).map(
+                  (status) => (
+                    <Button
+                      key={status}
+                      size="sm"
+                      variant={report.status === status ? "default" : "secondary"}
+                      disabled={updatingId === report.id || report.status === status}
+                      onClick={() => void onUpdateStatus(report.id, status)}
+                    >
+                      Mark {status}
+                    </Button>
+                  ),
+                )}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
