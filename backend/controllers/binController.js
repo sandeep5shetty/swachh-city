@@ -251,7 +251,7 @@ export const assignTruckToBin = async (req, res) => {
       message: "New bin assigned to your route"
     });
     await bin.save();
-    await Notification.save();
+    // await Notification.save();
 
 
     res.json({ message: "Truck assigned successfully" });
