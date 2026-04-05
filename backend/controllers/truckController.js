@@ -14,7 +14,7 @@ export const createTruck = async (req, res) => {
       currentLocation
     } = req.body;
 
-    if (!driverName || !regNo || !totalCapacity) {
+    if ( !regNo || !totalCapacity) {
       return res.status(400).json({ message: "Required fields missing" });
     }
 
