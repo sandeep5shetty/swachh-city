@@ -90,11 +90,11 @@ async function fetchPublicStats<T>(path: string): Promise<T> {
 
 function StatCell({ value, label }: { value: string; label: string }) {
   return (
-    <div className="px-8 py-10 sm:px-10">
-      <p className="text-5xl font-semibold tracking-tight text-white sm:text-6xl">
+    <div className="px-4 py-6 sm:px-8 sm:py-10">
+      <p className="text-3xl font-semibold tracking-tight text-white sm:text-5xl md:text-6xl">
         {value}
       </p>
-      <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+      <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 sm:text-xs sm:tracking-[0.22em]">
         {label}
       </p>
     </div>
@@ -191,17 +191,19 @@ export function LandingPage() {
     <main className="min-h-screen bg-[#03110d] text-[#ebf8f2]">
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_50%_28%,rgba(16,185,129,0.18),transparent_30%),radial-gradient(circle_at_50%_100%,rgba(6,95,70,0.28),transparent_34%),linear-gradient(180deg,#041512_0%,#020c0a_52%,#020807_100%)]" />
 
-      <header className="mx-auto flex w-full max-w-[1300px] items-center justify-between px-6 py-5">
-        <div className="flex items-center gap-2.5 text-white">
-          <Image
-            src="/logo.svg"
-            alt="Swachh City logo"
-            width={24}
-            height={24}
-            className="h-6 w-6 object-contain"
-            priority
-          />
-          <span className="text-[1.75rem] font-semibold tracking-tight">
+      <header className="mx-auto flex w-full max-w-[1300px] flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6 sm:py-5">
+        <div className="flex items-center gap-3 text-white">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-300/30 bg-emerald-300/10 shadow-[0_0_26px_rgba(16,185,129,0.28)]">
+            <Image
+              src="/logo.svg"
+              alt="Swachh City logo"
+              width={36}
+              height={36}
+              className="h-9 w-9 object-contain"
+              priority
+            />
+          </div>
+          <span className="text-2xl font-semibold tracking-tight sm:text-[1.75rem]">
             Swachh City
           </span>
         </div>
@@ -221,55 +223,59 @@ export function LandingPage() {
           </a>
         </nav>
 
-        <div className="flex items-center gap-5 text-sm">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 text-sm sm:w-auto sm:gap-3">
           <Link
             href="/dashboard"
-            className="text-slate-300 transition hover:text-white"
+            className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 font-medium text-slate-200 transition hover:bg-white/8 hover:text-white"
           >
-            Login
+            Dashboard Login
           </Link>
           <Link
             href="/dashboard"
             className="rounded-full bg-gradient-to-r from-[#0f9f74] to-[#18c58e] px-5 py-2.5 font-semibold text-white shadow-[0_10px_26px_rgba(16,185,129,0.35)] transition hover:brightness-110"
           >
-            View Demo
+            Open Operations Console
           </Link>
         </div>
       </header>
 
-      <section className="mx-auto mt-20 w-full max-w-[1150px] px-6 text-center">
+      <section className="mx-auto mt-12 w-full max-w-[1150px] px-4 text-center sm:mt-20 sm:px-6">
         <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.02] px-4 py-2 text-sm text-slate-300">
           <Sparkles className="h-3.5 w-3.5 text-emerald-300" />
           New: Open Data Public View
         </div>
 
-        <h1 className="mx-auto mt-8 max-w-[920px] text-5xl font-semibold leading-[1.05] tracking-tight text-white sm:text-7xl">
+        <h1 className="mx-auto mt-8 max-w-[920px] text-4xl font-semibold leading-[1.08] tracking-tight text-white sm:text-6xl lg:text-7xl">
           Reimagining Urban Waste
           <br />
           With a Digital Twin.
         </h1>
 
-        <p className="mx-auto mt-7 max-w-[820px] text-xl leading-relaxed text-slate-400">
+        <p className="mx-auto mt-6 max-w-[820px] text-base leading-relaxed text-slate-400 sm:mt-7 sm:text-xl">
           Real-time public intelligence for Bengaluru&apos;s waste network.
           Explore open operational data, monitor bin health, and understand
           dispatch performance without logging in.
         </p>
 
-        <div className="mt-11 flex flex-wrap items-center justify-center gap-8">
+        <div className="mt-11 flex flex-wrap items-center justify-center gap-4">
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#0f9f74] to-[#19c892] px-11 py-4 text-lg font-semibold text-white shadow-[0_16px_40px_rgba(16,185,129,0.34)] transition hover:translate-y-[-1px] hover:brightness-110"
+            className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#0f9f74] to-[#19c892] px-7 py-3.5 text-base font-semibold text-white shadow-[0_16px_40px_rgba(16,185,129,0.34)] transition hover:translate-y-[-1px] hover:brightness-110 sm:px-11 sm:py-4 sm:text-lg"
           >
-            Explore Platform
+            Open Dashboard Login
             <ArrowRight className="h-4 w-4" />
           </Link>
           <a
-            href="#live-map"
-            className="text-lg font-semibold text-slate-400 transition hover:text-white"
+            href="#impact"
+            className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.02] px-6 py-3.5 text-base font-semibold text-slate-200 transition hover:bg-white/8 hover:text-white sm:px-8 sm:py-4 sm:text-lg"
           >
-            Read Documentation
+            View Live Open Data
           </a>
         </div>
+        <p className="mt-4 text-sm text-slate-500">
+          Public insights are available below. Operational actions start from
+          Dashboard Login.
+        </p>
 
         <div className="mx-auto mt-16 h-12 w-[520px] max-w-full rounded-full bg-emerald-500/35 blur-3xl" />
       </section>
@@ -300,7 +306,7 @@ export function LandingPage() {
 
       <section
         id="features"
-        className="mx-auto mt-24 grid w-full max-w-[1300px] gap-6 px-6 md:grid-cols-3"
+        className="mx-auto mt-16 grid w-full max-w-[1300px] gap-6 px-4 sm:mt-24 sm:px-6 md:grid-cols-3"
       >
         {[
           {
@@ -323,15 +329,15 @@ export function LandingPage() {
           return (
             <article
               key={item.title}
-              className="rounded-3xl border border-white/8 bg-[#061711]/85 p-10 shadow-[0_18px_50px_rgba(0,0,0,0.25)]"
+              className="rounded-3xl border border-white/8 bg-[#061711]/85 p-6 shadow-[0_18px_50px_rgba(0,0,0,0.25)] sm:p-10"
             >
               <div className="mb-8 inline-flex rounded-xl border border-white/10 bg-white/[0.02] p-3">
                 <Icon className="h-6 w-6 text-slate-300" />
               </div>
-              <h3 className="text-4xl font-semibold leading-tight text-white">
+              <h3 className="text-2xl font-semibold leading-tight text-white sm:text-4xl">
                 {item.title}
               </h3>
-              <p className="mt-4 text-lg leading-relaxed text-slate-400">
+              <p className="mt-4 text-base leading-relaxed text-slate-400 sm:text-lg">
                 {item.copy}
               </p>
             </article>
@@ -341,18 +347,18 @@ export function LandingPage() {
 
       <section
         id="live-map"
-        className="mx-auto mt-24 w-full max-w-[1300px] px-6"
+        className="mx-auto mt-16 w-full max-w-[1300px] px-4 sm:mt-24 sm:px-6"
       >
         <div className="overflow-hidden rounded-[22px] border border-white/8 bg-[#051610]/85">
           <div className="grid min-h-[540px] md:grid-cols-[260px_1fr]">
-            <aside className="border-r border-white/7 bg-[#04120d]/85 p-8">
-              <div className="mb-10 flex items-center gap-2 text-2xl font-semibold text-white">
+            <aside className="border-b border-white/7 bg-[#04120d]/85 p-5 md:border-b-0 md:border-r md:p-8">
+              <div className="mb-8 flex items-center gap-2 text-xl font-semibold text-white md:text-2xl">
                 <Image
                   src="/logo.svg"
                   alt="Swachh City logo"
-                  width={20}
-                  height={20}
-                  className="h-5 w-5 object-contain"
+                  width={30}
+                  height={30}
+                  className="h-7 w-7 object-contain"
                 />
                 System Control
               </div>
@@ -383,8 +389,8 @@ export function LandingPage() {
                 })}
               </div>
 
-              <div className="mt-24 space-y-4 text-slate-400">
-                <div className="flex items-center justify-between text-lg">
+              <div className="mt-10 space-y-4 text-slate-400 md:mt-24">
+                <div className="flex items-center justify-between text-base md:text-lg">
                   <span className="inline-flex items-center gap-3">
                     <Bell className="h-5 w-5" /> Alerts
                   </span>
@@ -392,16 +398,16 @@ export function LandingPage() {
                     {openData.dashboard.complaints.unresolved}
                   </span>
                 </div>
-                <div className="flex items-center gap-3 text-lg">
+                <div className="flex items-center gap-3 text-base md:text-lg">
                   <Settings className="h-5 w-5" /> Configuration
                 </div>
               </div>
             </aside>
 
-            <div className="p-6 sm:p-8">
+            <div className="p-4 sm:p-6 md:p-8">
               <div className="rounded-2xl border border-white/7 bg-[#07140f]/75">
                 <div className="grid gap-4 border-b border-white/7 p-5 md:grid-cols-[1.5fr_1fr] md:items-center">
-                  <div className="text-3xl font-semibold text-white">
+                  <div className="text-xl font-semibold text-white sm:text-2xl md:text-3xl">
                     Active Zones (BBMP)
                   </div>
                   <div className="rounded-xl border border-white/7 bg-white/[0.02] px-4 py-2 text-sm text-slate-400">
@@ -487,13 +493,13 @@ export function LandingPage() {
 
       <section
         id="architecture"
-        className="mx-auto mt-28 w-full max-w-[1120px] px-6"
+        className="mx-auto mt-16 w-full max-w-[1120px] px-4 sm:mt-28 sm:px-6"
       >
         <div className="text-center">
-          <h2 className="text-6xl font-semibold tracking-tight text-white">
+          <h2 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
             Bridging Real & Virtual
           </h2>
-          <p className="mt-4 text-3xl text-slate-400">
+          <p className="mt-4 text-xl text-slate-400 sm:text-2xl lg:text-3xl">
             How the Swachh City Digital Twin operates.
           </p>
         </div>
@@ -531,10 +537,10 @@ export function LandingPage() {
               <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Phase {String(step)}
               </p>
-              <h3 className="mt-2 text-4xl font-semibold text-white">
+              <h3 className="mt-2 text-2xl font-semibold text-white sm:text-3xl lg:text-4xl">
                 {String(title)}
               </h3>
-              <p className="mt-4 text-xl leading-relaxed text-slate-400">
+              <p className="mt-4 text-base leading-relaxed text-slate-400 sm:text-lg lg:text-xl">
                 {String(copy)}
               </p>
             </article>
@@ -542,35 +548,43 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section className="mx-auto mt-28 w-full max-w-[1120px] px-6 pb-24 text-center">
-        <h2 className="mx-auto max-w-[940px] text-6xl font-semibold leading-tight tracking-tight text-white sm:text-7xl">
+      <section className="mx-auto mt-16 w-full max-w-[1120px] px-4 pb-24 text-center sm:mt-28 sm:px-6">
+        <h2 className="mx-auto max-w-[940px] text-4xl font-semibold leading-tight tracking-tight text-white sm:text-6xl lg:text-7xl">
           Ready to build the future of urban infrastructure?
         </h2>
-        <p className="mx-auto mt-7 max-w-[880px] text-2xl text-slate-400">
+        <p className="mx-auto mt-6 max-w-[880px] text-lg text-slate-400 sm:mt-7 sm:text-2xl">
           Join us in deploying the Swachh City Digital Twin to create cleaner,
           smarter, and more efficient cities.
         </p>
 
-        <Link
-          href="/dashboard"
-          className="mt-10 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#0f9f74] to-[#19c892] px-11 py-4 text-2xl font-semibold text-white shadow-[0_18px_45px_rgba(16,185,129,0.34)] transition hover:brightness-110"
-        >
-          Deploy Swachh City
-          <Gauge className="h-5 w-5" />
-        </Link>
+        <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#0f9f74] to-[#19c892] px-8 py-3.5 text-base font-semibold text-white shadow-[0_18px_45px_rgba(16,185,129,0.34)] transition hover:brightness-110 sm:px-10 sm:py-4 sm:text-xl"
+          >
+            Open Role-Based Dashboard
+            <Gauge className="h-5 w-5" />
+          </Link>
+          <a
+            href="#architecture"
+            className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.02] px-7 py-3.5 text-base font-semibold text-slate-200 transition hover:bg-white/8 hover:text-white sm:px-8 sm:py-4 sm:text-xl"
+          >
+            See How It Works
+          </a>
+        </div>
 
         <div className="mt-16 border-t border-white/6 pt-10 text-slate-500">
-          <p className="inline-flex items-center gap-2 text-2xl font-semibold text-slate-300">
+          <p className="inline-flex items-center gap-2 text-xl font-semibold text-slate-300 sm:text-2xl">
             <Image
               src="/logo.svg"
               alt="Swachh City logo"
-              width={20}
-              height={20}
-              className="h-5 w-5 object-contain"
+              width={28}
+              height={28}
+              className="h-7 w-7 object-contain"
             />
             Swachh City Team
           </p>
-          <p className="mt-3 text-lg">
+          <p className="mt-3 text-base sm:text-lg">
             Hackathon Prototype • Digital Twin for Urban Waste
           </p>
         </div>

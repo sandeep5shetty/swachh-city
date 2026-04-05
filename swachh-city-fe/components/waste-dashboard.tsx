@@ -79,6 +79,7 @@ type DriverTask = {
 
 type TwinBin = {
   id: string;
+  backendId?: string;
   label: string;
   longitude: number;
   latitude: number;
@@ -170,6 +171,19 @@ type BackendTruck = {
   totalCapacity?: number;
   status?: "IDLE" | "BUSY";
   currentLocation?: { lat?: number; lng?: number };
+  route?: Array<string | { _id?: string; binId?: string; area?: string }>;
+};
+
+type TruckLoadSummary = {
+  usedCapacity: number;
+  remainingCapacity: number;
+  percentage: number;
+};
+
+type TruckHistoryEntry = {
+  _id?: string;
+  location?: { lat?: number; lng?: number };
+  createdAt?: string;
 };
 
 type BackendComplaint = {
@@ -412,6 +426,22 @@ export function WasteDashboard() {
   const [toastQueue, setToastQueue] = useState<DriverNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [driverTasks, setDriverTasks] = useState<DriverTask[]>([]);
+  const [fleetActionPending, setFleetActionPending] = useState(false);
+  const [fleetActionMessage, setFleetActionMessage] = useState<string | null>(
+    null,
+  );
+  const [fleetSelectedTruckId, setFleetSelectedTruckId] = useState<
+    string | null
+  >(null);
+  const [fleetSelectedBinId, setFleetSelectedBinId] = useState<string | null>(
+    null,
+  );
+  const [fleetLoadSummary, setFleetLoadSummary] =
+    useState<TruckLoadSummary | null>(null);
+  const [fleetHistory, setFleetHistory] = useState<TruckHistoryEntry[]>([]);
+  const [fleetAvailableTruckIds, setFleetAvailableTruckIds] = useState<
+    string[]
+  >([]);
 
   const alertedBinsRef = useRef<Set<string>>(new Set());
   const notifiedComplaintsRef = useRef<Set<string>>(new Set());
@@ -678,6 +708,7 @@ export function WasteDashboard() {
 
       return {
         id: bin.binId ?? bin._id,
+        backendId: bin._id,
         label:
           bin.area ?? bin.landmark ?? bin.address ?? bin.binId ?? "Unnamed Bin",
         longitude: bin.location?.lng ?? fallbackLng,
@@ -1518,6 +1549,206 @@ export function WasteDashboard() {
     }
   }
 
+  const fetchFleetAvailableTrucks = useCallback(async () => {
+    if (authRole !== "admin") return;
+    try {
+      const response = await fetchJson<
+        BackendTruck[] | { data?: BackendTruck[] }
+      >("/api/trucks/available");
+      const list = Array.isArray(response) ? response : (response.data ?? []);
+      setFleetAvailableTruckIds(list.map((truck) => truck._id));
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to load available trucks: ${error.message}`
+          : "Failed to load available trucks",
+      );
+    }
+  }, [authRole]);
+
+  async function fetchFleetLoad(truckId: string) {
+    try {
+      const payload = await fetchJson<TruckLoadSummary>(
+        `/api/trucks/${truckId}/load`,
+      );
+      setFleetLoadSummary(payload);
+      setFleetActionMessage("Truck load details refreshed.");
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to fetch truck load: ${error.message}`
+          : "Failed to fetch truck load",
+      );
+    }
+  }
+
+  async function fetchFleetHistory(truckId: string) {
+    try {
+      const payload = await fetchJson<TruckHistoryEntry[]>(
+        `/api/trucks/${truckId}/history`,
+      );
+      setFleetHistory(payload.slice(0, 8));
+      setFleetActionMessage("Truck location history loaded.");
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to fetch truck history: ${error.message}`
+          : "Failed to fetch truck history",
+      );
+    }
+  }
+
+  async function assignDriverToTruckFromAdmin(
+    truckId: string,
+    driverId: string,
+  ) {
+    if (authRole !== "admin") {
+      setDataError("Only admin can assign drivers.");
+      return;
+    }
+    setFleetActionPending(true);
+    try {
+      await fetchJson<{ message: string }>(
+        `/api/trucks/${truckId}/assign-driver`,
+        {
+          method: "POST",
+          body: JSON.stringify({ driverId }),
+        },
+      );
+      setFleetActionMessage("Driver assigned to truck successfully.");
+      await loadOperationalData();
+      await fetchFleetAvailableTrucks();
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Driver assignment failed: ${error.message}`
+          : "Driver assignment failed",
+      );
+    } finally {
+      setFleetActionPending(false);
+    }
+  }
+
+  async function assignRouteToTruckFromAdmin(
+    truckId: string,
+    binBackendIds: string[],
+  ) {
+    if (authRole !== "admin") {
+      setDataError("Only admin can assign routes.");
+      return;
+    }
+    setFleetActionPending(true);
+    try {
+      await fetchJson<{ message: string }>(`/api/trucks/${truckId}/route`, {
+        method: "POST",
+        body: JSON.stringify({ binIds: binBackendIds }),
+      });
+      setFleetActionMessage("Route assigned to truck.");
+      await loadOperationalData();
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Route assignment failed: ${error.message}`
+          : "Route assignment failed",
+      );
+    } finally {
+      setFleetActionPending(false);
+    }
+  }
+
+  async function updateTruckLocationFromAdmin(
+    truckId: string,
+    lat: number,
+    lng: number,
+  ) {
+    if (authRole !== "admin") {
+      setDataError("Only admin can update truck location.");
+      return;
+    }
+    setFleetActionPending(true);
+    try {
+      await fetchJson<{ message?: string }>(`/api/trucks/${truckId}/location`, {
+        method: "POST",
+        body: JSON.stringify({ lat, lng }),
+      });
+      setFleetActionMessage("Truck location updated.");
+      await loadOperationalData();
+      await fetchFleetHistory(truckId);
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Truck location update failed: ${error.message}`
+          : "Truck location update failed",
+      );
+    } finally {
+      setFleetActionPending(false);
+    }
+  }
+
+  async function emptyTruckFromAdmin(truckId: string) {
+    if (authRole !== "admin") {
+      setDataError("Only admin can empty trucks.");
+      return;
+    }
+    setFleetActionPending(true);
+    try {
+      await fetchJson<{ message: string }>(
+        `/api/trucks/truck/${truckId}/empty`,
+        {
+          method: "POST",
+        },
+      );
+      setFleetActionMessage("Truck emptied at dump yard.");
+      await loadOperationalData();
+      await fetchFleetLoad(truckId);
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to empty truck: ${error.message}`
+          : "Failed to empty truck",
+      );
+    } finally {
+      setFleetActionPending(false);
+    }
+  }
+
+  async function assignTruckToBinFromAdmin(
+    binBackendId: string,
+    truckId: string,
+  ) {
+    if (authRole !== "admin") {
+      setDataError("Only admin can assign truck to bin.");
+      return;
+    }
+    setFleetActionPending(true);
+    try {
+      await fetchJson<{ message: string }>(
+        `/api/bins/${binBackendId}/assign-truck`,
+        {
+          method: "POST",
+          body: JSON.stringify({ truckId }),
+        },
+      );
+      setFleetActionMessage("Truck assigned to bin successfully.");
+      await loadOperationalData();
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? `Failed to assign truck to bin: ${error.message}`
+          : "Failed to assign truck to bin",
+      );
+    } finally {
+      setFleetActionPending(false);
+    }
+  }
+
+  useEffect(() => {
+    if (authRole !== "admin") {
+      return;
+    }
+    void fetchFleetAvailableTrucks();
+  }, [authRole, trucks.length, fetchFleetAvailableTrucks]);
+
   if (!authReady) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#05070f] px-4 text-[#f5f7ff]">
@@ -1544,8 +1775,8 @@ export function WasteDashboard() {
   }
 
   return (
-    <main className="h-screen overflow-hidden bg-[#05070f] text-[#f5f7ff]">
-      <div className="mx-auto flex h-full w-full max-w-[1440px] gap-0 px-2 lg:px-4">
+    <main className="min-h-screen bg-[#05070f] text-[#f5f7ff] lg:h-screen lg:overflow-hidden">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1440px] gap-0 px-2 lg:h-full lg:px-4">
         <aside className="hidden h-full w-[304px] shrink-0 border border-white/10 bg-[#060b18] lg:sticky lg:top-0 lg:flex lg:flex-col">
           <div className="border-b border-white/10 bg-linear-to-r from-emerald-500/10 via-cyan-500/5 to-transparent px-5 py-5">
             <div className="flex items-center gap-4">
@@ -1650,8 +1881,34 @@ export function WasteDashboard() {
         </aside>
 
         <section className="min-w-0 flex-1 overflow-y-auto border border-white/10 bg-[#060913]">
-          <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#060913]/95 px-6 py-4 backdrop-blur-md">
-            <h1 className="text-3xl font-semibold tracking-tight text-white">
+          <div className="border-b border-white/10 px-3 py-2 lg:hidden">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {visibleNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeNav === item.key;
+
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      setActiveNav(item.key);
+                      if (item.key !== "live-map") {
+                        resetSelection();
+                      }
+                    }}
+                    className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition ${isActive ? "border-cyan-300/40 bg-cyan-400/12 text-white" : "border-white/15 bg-white/5 text-slate-300"}`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#060913]/95 px-3 py-3 backdrop-blur-md sm:px-6 sm:py-4">
+            <h1 className="text-xl font-semibold tracking-tight text-white sm:text-3xl">
               {activeNav === "dashboard" && "System Overview"}
               {activeNav === "live-map" && "Digital Twin Live Map"}
               {activeNav === "driver" && "Driver Dispatch Center"}
@@ -1659,18 +1916,19 @@ export function WasteDashboard() {
               {activeNav === "reports" && "Citizen Reports Center"}
               {activeNav === "analytics" && "Analytics Dashboard"}
             </h1>
-            <div className="relative flex items-center gap-4">
+            <div className="relative ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-4">
               <button
                 type="button"
                 onClick={() => setSimulationActive((prev) => !prev)}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-2 text-sm text-slate-300"
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 sm:px-3.5 sm:text-sm"
               >
                 <span
                   className={`inline-block h-2.5 w-2.5 rounded-full ${simulationActive ? "bg-emerald-400" : "bg-slate-500"}`}
                 />
-                <span>
+                <span className="hidden sm:inline">
                   {simulationActive ? "Live Sync Active" : "Live Sync Paused"}
                 </span>
+                <span className="sm:hidden">Sync</span>
               </button>
               <button
                 type="button"
@@ -1686,7 +1944,7 @@ export function WasteDashboard() {
                     );
                   }
                 }}
-                className="rounded-full border border-white/10 bg-white/5 px-3.5 py-2 text-sm text-slate-300 transition hover:bg-white/10"
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 transition hover:bg-white/10 sm:px-3.5 sm:text-sm"
               >
                 Refresh
               </button>
@@ -1706,7 +1964,7 @@ export function WasteDashboard() {
               <button
                 type="button"
                 onClick={logout}
-                className="rounded-full border border-white/10 bg-white/5 px-3.5 py-2 text-sm text-slate-300 transition hover:bg-white/10"
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 transition hover:bg-white/10 sm:px-3.5 sm:text-sm"
               >
                 Logout
               </button>
@@ -2030,53 +2288,30 @@ export function WasteDashboard() {
             ) : null}
 
             {activeNav === "fleet" ? (
-              <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {geoTrucks.map((truck) => (
-                  <article
-                    key={truck.id}
-                    className="rounded-xl border border-white/10 bg-[#111520] p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm text-slate-400">{truck.id}</p>
-                        <h3 className="text-lg font-semibold text-white">
-                          {truck.name}
-                        </h3>
-                      </div>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${truck.status === "busy" || truck.status === "collecting" ? "bg-amber-500/16 text-amber-300" : truck.status === "en-route" ? "bg-cyan-500/18 text-cyan-300" : "bg-slate-500/20 text-slate-300"}`}
-                      >
-                        {truck.status}
-                      </span>
-                    </div>
-                    <p className="mt-3 text-sm text-slate-400">
-                      Capacity used: {truck.capacity}%
-                    </p>
-                    <div className="mt-2 h-2 rounded-full bg-slate-800">
-                      <div
-                        className="h-full rounded-full bg-linear-to-r from-cyan-400 to-emerald-300"
-                        style={{ width: `${truck.capacity}%` }}
-                      />
-                    </div>
-                    <p className="mt-3 text-xs text-slate-500">
-                      Assigned route: {truck.route.join(" -> ")}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Current point: {truck.latitude.toFixed(4)},{" "}
-                      {truck.longitude.toFixed(4)}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => cycleTruckStatus(truck.id)}
-                      disabled={authRole !== "admin"}
-                      className="mt-4 w-full rounded-lg border border-white/10 bg-white/5 py-2 text-sm font-medium text-slate-100 transition hover:bg-white/10"
-                    >
-                      {authRole === "admin"
-                        ? "Change Status"
-                        : "Admin only action"}
-                    </button>
-                  </article>
-                ))}
+              <section className="space-y-4">
+                <FleetOperationsPanel
+                  trucks={geoTrucks}
+                  bins={geoBins}
+                  isAdmin={authRole === "admin"}
+                  pending={fleetActionPending}
+                  selectedTruckId={fleetSelectedTruckId}
+                  selectedBinId={fleetSelectedBinId}
+                  availableTruckIds={fleetAvailableTruckIds}
+                  loadSummary={fleetLoadSummary}
+                  history={fleetHistory}
+                  message={fleetActionMessage}
+                  onSelectTruck={setFleetSelectedTruckId}
+                  onSelectBin={setFleetSelectedBinId}
+                  onToggleStatus={cycleTruckStatus}
+                  onAssignDriver={assignDriverToTruckFromAdmin}
+                  onAssignRoute={assignRouteToTruckFromAdmin}
+                  onUpdateLocation={updateTruckLocationFromAdmin}
+                  onEmptyTruck={emptyTruckFromAdmin}
+                  onAssignTruckToBin={assignTruckToBinFromAdmin}
+                  onFetchLoad={fetchFleetLoad}
+                  onFetchHistory={fetchFleetHistory}
+                  onRefreshAvailable={fetchFleetAvailableTrucks}
+                />
               </section>
             ) : null}
 
@@ -2170,7 +2405,7 @@ export function WasteDashboard() {
       </div>
 
       {toastQueue.length ? (
-        <div className="pointer-events-none fixed right-4 top-4 z-[60] flex w-[360px] max-w-[calc(100vw-1.25rem)] flex-col gap-2">
+        <div className="pointer-events-none fixed right-2 top-3 z-[60] flex w-[calc(100vw-1rem)] max-w-[360px] flex-col gap-2 sm:right-4 sm:top-4 sm:w-[360px]">
           {toastQueue.map((item) => (
             <div
               key={item.id}
@@ -2580,7 +2815,7 @@ function NotificationPanel({
   onClose: () => void;
 }) {
   return (
-    <Card className="absolute right-0 top-12 z-40 w-[360px] border-white/15 bg-[#0d1324]/95 shadow-[0_25px_70px_-25px_rgba(15,23,42,0.8)] backdrop-blur-xl">
+    <Card className="absolute right-0 top-12 z-40 w-[calc(100vw-1rem)] max-w-[360px] border-white/15 bg-[#0d1324]/95 shadow-[0_25px_70px_-25px_rgba(15,23,42,0.8)] backdrop-blur-xl sm:w-[360px]">
       <CardContent className="p-0">
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
           <p className="text-sm font-semibold text-white">Notifications</p>
@@ -2619,6 +2854,445 @@ function NotificationPanel({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function FleetOperationsPanel({
+  trucks,
+  bins,
+  isAdmin,
+  pending,
+  selectedTruckId,
+  selectedBinId,
+  availableTruckIds,
+  loadSummary,
+  history,
+  message,
+  onSelectTruck,
+  onSelectBin,
+  onToggleStatus,
+  onAssignDriver,
+  onAssignRoute,
+  onUpdateLocation,
+  onEmptyTruck,
+  onAssignTruckToBin,
+  onFetchLoad,
+  onFetchHistory,
+  onRefreshAvailable,
+}: {
+  trucks: Array<FleetTruck & GeoPoint>;
+  bins: Array<TwinBin & GeoPoint>;
+  isAdmin: boolean;
+  pending: boolean;
+  selectedTruckId: string | null;
+  selectedBinId: string | null;
+  availableTruckIds: string[];
+  loadSummary: TruckLoadSummary | null;
+  history: TruckHistoryEntry[];
+  message: string | null;
+  onSelectTruck: (id: string | null) => void;
+  onSelectBin: (id: string | null) => void;
+  onToggleStatus: (truckId: string) => Promise<void>;
+  onAssignDriver: (truckId: string, driverId: string) => Promise<void>;
+  onAssignRoute: (truckId: string, binBackendIds: string[]) => Promise<void>;
+  onUpdateLocation: (
+    truckId: string,
+    lat: number,
+    lng: number,
+  ) => Promise<void>;
+  onEmptyTruck: (truckId: string) => Promise<void>;
+  onAssignTruckToBin: (binBackendId: string, truckId: string) => Promise<void>;
+  onFetchLoad: (truckId: string) => Promise<void>;
+  onFetchHistory: (truckId: string) => Promise<void>;
+  onRefreshAvailable: () => Promise<void>;
+}) {
+  const [driverIdInput, setDriverIdInput] = useState("");
+  const [locationLatInput, setLocationLatInput] = useState("");
+  const [locationLngInput, setLocationLngInput] = useState("");
+  const [routeBinBackendIds, setRouteBinBackendIds] = useState<string[]>([]);
+
+  const selectedTruck =
+    selectedTruckId !== null
+      ? (trucks.find((truck) => truck.id === selectedTruckId) ?? null)
+      : null;
+
+  const selectedBin =
+    selectedBinId !== null
+      ? (bins.find((bin) => bin.id === selectedBinId) ?? null)
+      : null;
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <Card className="border-white/12 bg-[#111520]">
+        <CardContent className="p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-semibold text-white">
+                Fleet Operations
+              </h3>
+              <p className="text-sm text-slate-400">
+                Manage route assignment, driver linkage, and truck telemetry.
+              </p>
+            </div>
+            {isAdmin ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={pending}
+                onClick={() => void onRefreshAvailable()}
+              >
+                Refresh Available Trucks
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                Select Truck
+              </label>
+              <select
+                value={selectedTruckId ?? ""}
+                onChange={(event) => {
+                  const nextId = event.target.value || null;
+                  onSelectTruck(nextId);
+                  const nextTruck = nextId
+                    ? trucks.find((truck) => truck.id === nextId)
+                    : null;
+                  setLocationLatInput(
+                    nextTruck ? nextTruck.latitude.toFixed(6) : "",
+                  );
+                  setLocationLngInput(
+                    nextTruck ? nextTruck.longitude.toFixed(6) : "",
+                  );
+                }}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+              >
+                <option value="">Choose truck</option>
+                {trucks.map((truck) => (
+                  <option key={truck.id} value={truck.id}>
+                    {truck.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                Select Bin
+              </label>
+              <select
+                value={selectedBinId ?? ""}
+                onChange={(event) => onSelectBin(event.target.value || null)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+              >
+                <option value="">Choose bin</option>
+                {bins.map((bin) => (
+                  <option key={bin.id} value={bin.id}>
+                    {bin.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {selectedTruck ? (
+            <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-slate-300">
+              <p>
+                <span className="text-slate-500">Truck:</span>{" "}
+                {selectedTruck.name}
+              </p>
+              <p className="mt-1">
+                <span className="text-slate-500">Status:</span>{" "}
+                {selectedTruck.status}
+              </p>
+              <p className="mt-1">
+                <span className="text-slate-500">Capacity:</span>{" "}
+                {selectedTruck.capacity}%
+              </p>
+            </div>
+          ) : null}
+
+          {isAdmin ? (
+            <div className="mt-4 space-y-4">
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="mb-2 text-sm font-medium text-white">
+                  Driver Assignment (Route: POST /api/trucks/:id/assign-driver)
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    type="text"
+                    value={driverIdInput}
+                    onChange={(event) => setDriverIdInput(event.target.value)}
+                    className="h-10 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Driver Mongo ID"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={
+                      pending || !selectedTruckId || !driverIdInput.trim()
+                    }
+                    onClick={() =>
+                      selectedTruckId
+                        ? void onAssignDriver(
+                            selectedTruckId,
+                            driverIdInput.trim(),
+                          )
+                        : undefined
+                    }
+                  >
+                    Assign Driver
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="mb-2 text-sm font-medium text-white">
+                  Route Assignment (POST /api/trucks/:id/route)
+                </p>
+                <select
+                  multiple
+                  value={routeBinBackendIds}
+                  onChange={(event) => {
+                    const next = [...event.target.selectedOptions].map(
+                      (option) => option.value,
+                    );
+                    setRouteBinBackendIds(next);
+                  }}
+                  className="h-32 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-100 outline-none"
+                >
+                  {bins
+                    .filter((bin) => Boolean(bin.backendId))
+                    .map((bin) => (
+                      <option key={bin.id} value={bin.backendId}>
+                        {bin.label}
+                      </option>
+                    ))}
+                </select>
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    size="sm"
+                    disabled={
+                      pending || !selectedTruckId || !routeBinBackendIds.length
+                    }
+                    onClick={() =>
+                      selectedTruckId
+                        ? void onAssignRoute(
+                            selectedTruckId,
+                            routeBinBackendIds,
+                          )
+                        : undefined
+                    }
+                  >
+                    Assign Route
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="mb-2 text-sm font-medium text-white">
+                  Truck Location (POST /api/trucks/:id/location)
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={locationLatInput}
+                    onChange={(event) =>
+                      setLocationLatInput(event.target.value)
+                    }
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Latitude"
+                  />
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={locationLngInput}
+                    onChange={(event) =>
+                      setLocationLngInput(event.target.value)
+                    }
+                    className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
+                    placeholder="Longitude"
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={pending || !selectedTruckId}
+                    onClick={() =>
+                      selectedTruckId
+                        ? void onToggleStatus(selectedTruckId)
+                        : undefined
+                    }
+                  >
+                    Toggle Status
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={
+                      pending ||
+                      !selectedTruckId ||
+                      Number.isNaN(Number(locationLatInput)) ||
+                      Number.isNaN(Number(locationLngInput))
+                    }
+                    onClick={() =>
+                      selectedTruckId
+                        ? void onUpdateLocation(
+                            selectedTruckId,
+                            Number(locationLatInput),
+                            Number(locationLngInput),
+                          )
+                        : undefined
+                    }
+                  >
+                    Update Location
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="mb-2 text-sm font-medium text-white">
+                  Collection Ops
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={pending || !selectedTruckId}
+                    onClick={() =>
+                      selectedTruckId
+                        ? void onFetchLoad(selectedTruckId)
+                        : undefined
+                    }
+                  >
+                    Get Load
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={pending || !selectedTruckId}
+                    onClick={() =>
+                      selectedTruckId
+                        ? void onFetchHistory(selectedTruckId)
+                        : undefined
+                    }
+                  >
+                    Get History
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={pending || !selectedTruckId}
+                    onClick={() =>
+                      selectedTruckId
+                        ? void onEmptyTruck(selectedTruckId)
+                        : undefined
+                    }
+                  >
+                    Empty Truck
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={
+                      pending ||
+                      !selectedTruckId ||
+                      !selectedBin ||
+                      !selectedBin.backendId
+                    }
+                    onClick={() =>
+                      selectedTruckId && selectedBin?.backendId
+                        ? void onAssignTruckToBin(
+                            selectedBin.backendId,
+                            selectedTruckId,
+                          )
+                        : undefined
+                    }
+                  >
+                    Assign Truck To Bin
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-400">
+              Admin controls are hidden for non-admin users.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="space-y-4">
+        <Card className="border-white/12 bg-[#111520]">
+          <CardContent className="p-4">
+            <h4 className="text-base font-semibold text-white">
+              Fleet Snapshot
+            </h4>
+            <div className="mt-3 space-y-2 text-sm text-slate-300">
+              <p>Total trucks: {trucks.length}</p>
+              <p>Currently available: {availableTruckIds.length}</p>
+              <p>
+                Busy trucks:{" "}
+                {trucks.filter((truck) => truck.status !== "idle").length}
+              </p>
+            </div>
+            {message ? (
+              <p className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                {message}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="border-white/12 bg-[#111520]">
+          <CardContent className="p-4">
+            <h4 className="text-base font-semibold text-white">Truck Load</h4>
+            {!loadSummary ? (
+              <p className="mt-2 text-sm text-slate-400">
+                Load details will appear after using Get Load.
+              </p>
+            ) : (
+              <div className="mt-3 space-y-2 text-sm text-slate-300">
+                <p>Used capacity: {loadSummary.usedCapacity}</p>
+                <p>Remaining capacity: {loadSummary.remainingCapacity}</p>
+                <p>Fill percentage: {loadSummary.percentage}%</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-white/12 bg-[#111520]">
+          <CardContent className="p-4">
+            <h4 className="text-base font-semibold text-white">
+              Recent History
+            </h4>
+            {!history.length ? (
+              <p className="mt-2 text-sm text-slate-400">
+                Location events will appear after using Get History.
+              </p>
+            ) : (
+              <div className="mt-3 space-y-2 text-xs text-slate-300">
+                {history.map((entry, index) => (
+                  <div
+                    key={entry._id ?? `${entry.createdAt ?? "entry"}-${index}`}
+                    className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2"
+                  >
+                    <p>
+                      {entry.location?.lat?.toFixed(5) ?? "--"},{" "}
+                      {entry.location?.lng?.toFixed(5) ?? "--"}
+                    </p>
+                    <p className="mt-1 text-slate-500">
+                      {entry.createdAt
+                        ? formatRelativeTime(entry.createdAt)
+                        : "Time unavailable"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }
 
