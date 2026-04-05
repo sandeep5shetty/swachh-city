@@ -13,6 +13,7 @@ import {
   Sparkles,
   Truck,
 } from "lucide-react";
+import { GenerativeMountainScene } from "@/components/generative-mountain-scene";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -188,8 +189,12 @@ export function LandingPage() {
   }, [openData]);
 
   return (
-    <main className="min-h-screen bg-[#03110d] text-[#ebf8f2]">
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_50%_28%,rgba(16,185,129,0.18),transparent_30%),radial-gradient(circle_at_50%_100%,rgba(6,95,70,0.28),transparent_34%),linear-gradient(180deg,#041512_0%,#020c0a_52%,#020807_100%)]" />
+    <main className="relative min-h-screen overflow-x-hidden bg-[#03110d] text-[#ebf8f2]">
+      <div className="pointer-events-none fixed inset-0 -z-20 bg-[radial-gradient(circle_at_50%_28%,rgba(16,185,129,0.18),transparent_30%),radial-gradient(circle_at_50%_100%,rgba(6,95,70,0.28),transparent_34%),linear-gradient(180deg,#041512_0%,#020c0a_52%,#020807_100%)]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] opacity-70 sm:h-[560px]">
+        <GenerativeMountainScene />
+        <div className="absolute inset-0 bg-linear-to-b from-emerald-300/10 via-transparent to-[#03110d]" />
+      </div>
 
       <header className="mx-auto flex w-full max-w-[1300px] flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6 sm:py-5">
         <div className="flex items-center gap-3 text-white">
@@ -225,17 +230,25 @@ export function LandingPage() {
 
         <div className="flex w-full flex-wrap items-center justify-end gap-2 text-sm sm:w-auto sm:gap-3">
           <Link
-            href="/dashboard"
+            href="/dashboard?mode=citizen-login"
             className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 font-medium text-slate-200 transition hover:bg-white/8 hover:text-white"
           >
-            Dashboard Login
+            Citizen Login
           </Link>
           <Link
-            href="/dashboard"
+            href="/dashboard?mode=driver-login"
+            className="rounded-full border border-emerald-300/30 bg-emerald-400/15 px-5 py-2.5 font-semibold text-emerald-100 shadow-[0_10px_26px_rgba(16,185,129,0.25)] transition hover:brightness-110"
+          >
+            Driver Login
+          </Link>
+          <a
+            href="https://github.com/sandeep5shetty/swachh-city"
+            target="_blank"
+            rel="noreferrer"
             className="rounded-full bg-gradient-to-r from-[#0f9f74] to-[#18c58e] px-5 py-2.5 font-semibold text-white shadow-[0_10px_26px_rgba(16,185,129,0.35)] transition hover:brightness-110"
           >
-            Open Operations Console
-          </Link>
+            View Source Code
+          </a>
         </div>
       </header>
 
@@ -259,22 +272,36 @@ export function LandingPage() {
 
         <div className="mt-11 flex flex-wrap items-center justify-center gap-4">
           <Link
-            href="/dashboard"
+            href="/dashboard?mode=citizen-login"
             className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#0f9f74] to-[#19c892] px-7 py-3.5 text-base font-semibold text-white shadow-[0_16px_40px_rgba(16,185,129,0.34)] transition hover:translate-y-[-1px] hover:brightness-110 sm:px-11 sm:py-4 sm:text-lg"
           >
-            Open Dashboard Login
+            Citizen Login
             <ArrowRight className="h-4 w-4" />
           </Link>
-          <a
-            href="#impact"
+          <Link
+            href="/dashboard?mode=driver-login"
             className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.02] px-6 py-3.5 text-base font-semibold text-slate-200 transition hover:bg-white/8 hover:text-white sm:px-8 sm:py-4 sm:text-lg"
           >
-            View Live Open Data
+            Driver Login
+          </Link>
+          <Link
+            href="/dashboard?mode=admin-login"
+            className="inline-flex items-center rounded-full border border-cyan-300/30 bg-cyan-400/10 px-6 py-3.5 text-base font-semibold text-cyan-100 transition hover:bg-cyan-300/15 hover:text-white sm:px-8 sm:py-4 sm:text-lg"
+          >
+            Admin Login
+          </Link>
+          <a
+            href="https://github.com/sandeep5shetty/swachh-city"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.02] px-6 py-3.5 text-base font-semibold text-slate-200 transition hover:bg-white/8 hover:text-white sm:px-8 sm:py-4 sm:text-lg"
+          >
+            View Source Code
           </a>
         </div>
         <p className="mt-4 text-sm text-slate-500">
-          Public insights are available below. Operational actions start from
-          Dashboard Login.
+          Choose a role-specific login or open the repository to review the
+          project implementation.
         </p>
 
         <div className="mx-auto mt-16 h-12 w-[520px] max-w-full rounded-full bg-emerald-500/35 blur-3xl" />
@@ -559,17 +586,25 @@ export function LandingPage() {
 
         <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
           <Link
-            href="/dashboard"
+            href="/dashboard?mode=driver-login"
             className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#0f9f74] to-[#19c892] px-8 py-3.5 text-base font-semibold text-white shadow-[0_18px_45px_rgba(16,185,129,0.34)] transition hover:brightness-110 sm:px-10 sm:py-4 sm:text-xl"
           >
-            Open Role-Based Dashboard
+            Driver Login
             <Gauge className="h-5 w-5" />
           </Link>
-          <a
-            href="#architecture"
+          <Link
+            href="/dashboard?mode=citizen-login"
             className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.02] px-7 py-3.5 text-base font-semibold text-slate-200 transition hover:bg-white/8 hover:text-white sm:px-8 sm:py-4 sm:text-xl"
           >
-            See How It Works
+            Citizen Login
+          </Link>
+          <a
+            href="https://github.com/sandeep5shetty/swachh-city"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.02] px-7 py-3.5 text-base font-semibold text-slate-200 transition hover:bg-white/8 hover:text-white sm:px-8 sm:py-4 sm:text-xl"
+          >
+            View Source Code
           </a>
         </div>
 

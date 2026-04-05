@@ -89,6 +89,8 @@ type TwinBin = {
 type FleetTruck = {
   id: string;
   name: string;
+  driverId?: string;
+  driverDisplayName?: string;
   driverEmail?: string;
   status: "idle" | "en-route" | "collecting" | "busy";
   capacity: number;
@@ -392,6 +394,10 @@ export function WasteDashboard() {
   const [adminDriverMessage, setAdminDriverMessage] = useState<string | null>(
     null,
   );
+  const [adminEmailSubmitting, setAdminEmailSubmitting] = useState(false);
+  const [adminEmailMessage, setAdminEmailMessage] = useState<string | null>(
+    null,
+  );
 
   const [activeNav, setActiveNav] = useState<NavKey>("dashboard");
   const [mapMode, setMapMode] = useState<MapMode>("live");
@@ -463,6 +469,22 @@ export function WasteDashboard() {
     }
 
     setAuthReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    if (
+      mode === "citizen-login" ||
+      mode === "citizen-register" ||
+      mode === "admin-login" ||
+      mode === "driver-login"
+    ) {
+      setAuthMode(mode);
+    }
   }, []);
 
   function persistSession(
@@ -739,6 +761,8 @@ export function WasteDashboard() {
       return {
         id: truck._id,
         name: `${truck.regNo ?? "Truck"}${truck.driverName ? ` · ${truck.driverName}` : ""}`,
+        driverId: truck.driver?._id,
+        driverDisplayName: truck.driver?.name ?? truck.driverName,
         driverEmail: truck.driver?.email,
         status: truck.status === "BUSY" ? "busy" : "idle",
         capacity: Math.max(
@@ -1136,6 +1160,10 @@ export function WasteDashboard() {
       priority: TaskPriority;
       taskId: string;
     }) => {
+      if (authRole !== "admin") {
+        return;
+      }
+
       try {
         await fetchJson<{ message: string }>("/api/email/driver-alert", {
           method: "POST",
@@ -1149,8 +1177,48 @@ export function WasteDashboard() {
         );
       }
     },
-    [],
+    [authRole],
   );
+
+  async function sendAdminTestDriverEmail(input: {
+    truckId: string;
+    alertType: "bin-full" | "citizen-report";
+    locationLabel: string;
+    priority: TaskPriority;
+    taskId: string;
+  }) {
+    if (authRole !== "admin") {
+      setDataError("Only admin can send test emails.");
+      return;
+    }
+
+    setAdminEmailSubmitting(true);
+    setAdminEmailMessage(null);
+    try {
+      const payload = await fetchJson<{ message: string; to?: string }>(
+        "/api/email/driver-alert",
+        {
+          method: "POST",
+          body: JSON.stringify(input),
+        },
+      );
+
+      setAdminEmailMessage(
+        payload.to
+          ? `Test email sent successfully to ${payload.to}.`
+          : "Test email sent successfully.",
+      );
+      setDataError(null);
+    } catch (error) {
+      setAdminEmailMessage(
+        error instanceof Error
+          ? `Test email failed: ${error.message}`
+          : "Test email failed",
+      );
+    } finally {
+      setAdminEmailSubmitting(false);
+    }
+  }
 
   const findNearestIdleTruck = useCallback(
     (target: GeoPoint, ward: WardNode | null) => {
@@ -2199,11 +2267,19 @@ export function WasteDashboard() {
                       />
                     </>
                   ) : authRole === "admin" ? (
-                    <AdminDriverRegistrationPanel
-                      isSubmitting={adminDriverSubmitting}
-                      feedback={adminDriverMessage}
-                      onRegister={registerDriverByAdmin}
-                    />
+                    <>
+                      <AdminDriverRegistrationPanel
+                        isSubmitting={adminDriverSubmitting}
+                        feedback={adminDriverMessage}
+                        onRegister={registerDriverByAdmin}
+                      />
+                      <AdminEmailAlertPanel
+                        trucks={geoTrucks}
+                        isSubmitting={adminEmailSubmitting}
+                        feedback={adminEmailMessage}
+                        onSend={sendAdminTestDriverEmail}
+                      />
+                    </>
                   ) : (
                     <ReportsPanel reports={reports} compact />
                   )}
@@ -2805,6 +2881,141 @@ function AdminDriverRegistrationPanel({
   );
 }
 
+function AdminEmailAlertPanel({
+  trucks,
+  isSubmitting,
+  feedback,
+  onSend,
+}: {
+  trucks: Array<FleetTruck & GeoPoint>;
+  isSubmitting: boolean;
+  feedback: string | null;
+  onSend: (input: {
+    truckId: string;
+    alertType: "bin-full" | "citizen-report";
+    locationLabel: string;
+    priority: TaskPriority;
+    taskId: string;
+  }) => Promise<void>;
+}) {
+  const [truckId, setTruckId] = useState("");
+  const [alertType, setAlertType] = useState<"bin-full" | "citizen-report">(
+    "bin-full",
+  );
+  const [locationLabel, setLocationLabel] = useState("MG Road, Bengaluru");
+  const [priority, setPriority] = useState<TaskPriority>("high");
+  const [taskId, setTaskId] = useState(() => makeId("test-email"));
+  const effectiveTruckId = truckId || trucks[0]?.id || "";
+
+  return (
+    <Card className="border-white/12 bg-[#111520]">
+      <CardContent className="p-4">
+        <div className="mb-4">
+          <h3 className="text-lg font-semibold text-white">
+            Send Test Driver Email
+          </h3>
+          <p className="mt-1 text-sm text-slate-400">
+            Testing mode is active. Alerts are routed to devfolio0124@gmail.com
+            when backend TEST_DRIVER_EMAIL is set.
+          </p>
+        </div>
+
+        <form
+          className="space-y-3"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!effectiveTruckId) {
+              return;
+            }
+
+            await onSend({
+              truckId: effectiveTruckId,
+              alertType,
+              locationLabel: locationLabel.trim(),
+              priority,
+              taskId: taskId.trim(),
+            });
+          }}
+        >
+          <select
+            value={truckId}
+            onChange={(event) => setTruckId(event.target.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+            required
+          >
+            <option value="">Select truck</option>
+            {trucks.map((truck) => (
+              <option key={truck.id} value={truck.id}>
+                {truck.name} ({truck.id})
+              </option>
+            ))}
+          </select>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <select
+              value={alertType}
+              onChange={(event) =>
+                setAlertType(
+                  event.target.value as "bin-full" | "citizen-report",
+                )
+              }
+              className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+            >
+              <option value="bin-full">Bin Full</option>
+              <option value="citizen-report">Citizen Complaint</option>
+            </select>
+
+            <select
+              value={priority}
+              onChange={(event) =>
+                setPriority(event.target.value as TaskPriority)
+              }
+              className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+            >
+              <option value="high">High Priority</option>
+              <option value="medium">Medium Priority</option>
+            </select>
+          </div>
+
+          <input
+            type="text"
+            required
+            value={locationLabel}
+            onChange={(event) => setLocationLabel(event.target.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+            placeholder="Location label"
+          />
+
+          <input
+            type="text"
+            required
+            value={taskId}
+            onChange={(event) => setTaskId(event.target.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+            placeholder="Task ID"
+          />
+
+          {feedback ? (
+            <p
+              className={`rounded-lg border px-3 py-2 text-xs ${feedback.toLowerCase().includes("failed") || feedback.toLowerCase().includes("error") ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"}`}
+            >
+              {feedback}
+            </p>
+          ) : null}
+
+          <Button
+            type="submit"
+            disabled={isSubmitting || !effectiveTruckId}
+            className="w-full"
+          >
+            {isSubmitting ? "Sending..." : "Send Test Email"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
 function NotificationPanel({
   notifications,
   onMarkAllRead,
@@ -2906,10 +3117,31 @@ function FleetOperationsPanel({
   onFetchHistory: (truckId: string) => Promise<void>;
   onRefreshAvailable: () => Promise<void>;
 }) {
-  const [driverIdInput, setDriverIdInput] = useState("");
+  const [selectedDriverId, setSelectedDriverId] = useState("");
   const [locationLatInput, setLocationLatInput] = useState("");
   const [locationLngInput, setLocationLngInput] = useState("");
   const [routeBinBackendIds, setRouteBinBackendIds] = useState<string[]>([]);
+
+  const assignableDrivers = useMemo(() => {
+    const byId = new globalThis.Map<
+      string,
+      { id: string; label: string; email?: string }
+    >();
+
+    trucks.forEach((truck) => {
+      if (!truck.driverId) {
+        return;
+      }
+
+      byId.set(truck.driverId, {
+        id: truck.driverId,
+        label: truck.driverDisplayName ?? truck.name,
+        email: truck.driverEmail,
+      });
+    });
+
+    return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [trucks]);
 
   const selectedTruck =
     selectedTruckId !== null
@@ -2959,6 +3191,7 @@ function FleetOperationsPanel({
                   const nextTruck = nextId
                     ? trucks.find((truck) => truck.id === nextId)
                     : null;
+                  setSelectedDriverId(nextTruck?.driverId ?? "");
                   setLocationLatInput(
                     nextTruck ? nextTruck.latitude.toFixed(6) : "",
                   );
@@ -3010,6 +3243,10 @@ function FleetOperationsPanel({
                 <span className="text-slate-500">Capacity:</span>{" "}
                 {selectedTruck.capacity}%
               </p>
+              <p className="mt-1">
+                <span className="text-slate-500">Assigned driver:</span>{" "}
+                {selectedTruck.driverDisplayName ?? "Not assigned"}
+              </p>
             </div>
           ) : null}
 
@@ -3020,30 +3257,39 @@ function FleetOperationsPanel({
                   Driver Assignment (Route: POST /api/trucks/:id/assign-driver)
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
-                    type="text"
-                    value={driverIdInput}
-                    onChange={(event) => setDriverIdInput(event.target.value)}
+                  <select
+                    value={selectedDriverId}
+                    onChange={(event) => setSelectedDriverId(event.target.value)}
                     className="h-10 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
-                    placeholder="Driver Mongo ID"
-                  />
+                  >
+                    <option value="">Select driver name</option>
+                    {assignableDrivers.map((driver) => (
+                      <option key={driver.id} value={driver.id}>
+                        {driver.label}
+                        {driver.email ? ` (${driver.email})` : ""}
+                      </option>
+                    ))}
+                  </select>
                   <Button
                     size="sm"
                     disabled={
-                      pending || !selectedTruckId || !driverIdInput.trim()
+                      pending || !selectedTruckId || !selectedDriverId
                     }
                     onClick={() =>
                       selectedTruckId
-                        ? void onAssignDriver(
-                            selectedTruckId,
-                            driverIdInput.trim(),
-                          )
+                        ? void onAssignDriver(selectedTruckId, selectedDriverId)
                         : undefined
                     }
                   >
                     Assign Driver
                   </Button>
                 </div>
+                {!assignableDrivers.length ? (
+                  <p className="mt-2 text-xs text-slate-500">
+                    No driver names found in current truck data. Register
+                    drivers first and refresh data.
+                  </p>
+                ) : null}
               </div>
 
               <div className="rounded-lg border border-white/10 bg-black/20 p-3">

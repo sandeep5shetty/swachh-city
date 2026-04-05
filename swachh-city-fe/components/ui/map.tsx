@@ -146,11 +146,11 @@ type MapProps = {
 
 function DefaultLoader() {
   return (
-    <div className="bg-background/50 absolute inset-0 z-10 flex items-center justify-center backdrop-blur-xs">
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#07110f]/55 backdrop-blur-xs">
       <div className="flex gap-1">
-        <span className="bg-muted-foreground/60 size-1.5 animate-pulse rounded-full" />
-        <span className="bg-muted-foreground/60 size-1.5 animate-pulse rounded-full [animation-delay:150ms]" />
-        <span className="bg-muted-foreground/60 size-1.5 animate-pulse rounded-full [animation-delay:300ms]" />
+        <span className="size-1.5 animate-pulse rounded-full bg-emerald-300/70" />
+        <span className="size-1.5 animate-pulse rounded-full bg-emerald-300/70 [animation-delay:150ms]" />
+        <span className="size-1.5 animate-pulse rounded-full bg-emerald-300/70 [animation-delay:300ms]" />
       </div>
     </div>
   );
@@ -730,12 +730,12 @@ const positionClasses = {
   "top-left": "top-2 left-2",
   "top-right": "top-2 right-2",
   "bottom-left": "bottom-2 left-2",
-  "bottom-right": "bottom-10 right-2",
+  "bottom-right": "bottom-12 right-2 sm:bottom-10",
 };
 
 function ControlGroup({ children }: { children: React.ReactNode }) {
   return (
-    <div className="border-border bg-background [&>button:not(:last-child)]:border-border flex flex-col overflow-hidden rounded-md border shadow-sm [&>button:not(:last-child)]:border-b">
+    <div className="flex flex-col overflow-hidden rounded-2xl border border-emerald-200/20 bg-[#0a1322]/88 shadow-[0_14px_32px_rgba(2,8,23,0.5)] backdrop-blur-md [&>button:not(:last-child)]:border-b [&>button:not(:last-child)]:border-emerald-200/20">
       {children}
     </div>
   );
@@ -758,7 +758,7 @@ function ControlButton({
       aria-label={label}
       type="button"
       className={cn(
-        "hover:bg-accent dark:hover:bg-accent/40 flex size-8 items-center justify-center transition-colors",
+        "flex size-9 items-center justify-center text-emerald-100/90 transition-colors hover:bg-emerald-300/12 hover:text-white",
         disabled && "pointer-events-none cursor-not-allowed opacity-50",
       )}
       disabled={disabled}
@@ -909,10 +909,10 @@ function CompassButton({ onClick }: { onClick: () => void }) {
         className="size-5 transition-transform duration-200"
         style={{ transformStyle: "preserve-3d" }}
       >
-        <path d="M12 2L16 12H12V2Z" className="fill-red-500" />
-        <path d="M12 2L8 12H12V2Z" className="fill-red-300" />
-        <path d="M12 22L16 12H12V22Z" className="fill-muted-foreground/60" />
-        <path d="M12 22L8 12H12V22Z" className="fill-muted-foreground/30" />
+        <path d="M12 2L16 12H12V2Z" className="fill-emerald-300" />
+        <path d="M12 2L8 12H12V2Z" className="fill-cyan-300" />
+        <path d="M12 22L16 12H12V22Z" className="fill-slate-300/60" />
+        <path d="M12 22L8 12H12V22Z" className="fill-slate-300/30" />
       </svg>
     </ControlButton>
   );
@@ -1006,7 +1006,7 @@ function MapPopup({
   return createPortal(
     <div
       className={cn(
-        "bg-popover text-popover-foreground animate-in fade-in-0 zoom-in-95 relative rounded-md border p-3 shadow-md",
+        "animate-in fade-in-0 zoom-in-95 relative rounded-xl border border-emerald-200/20 bg-[#0b1220]/95 p-3 text-slate-100 shadow-[0_18px_40px_rgba(2,8,23,0.55)] backdrop-blur-md",
         className,
       )}
     >
