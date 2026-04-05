@@ -51,8 +51,18 @@ type OpenDataState = {
   today: TodayStats;
 };
 
-const BACKEND_BASE_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000";
+const BACKEND_BASE_URL = (() => {
+  const configuredUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/+$/, "");
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    return "http://localhost:5000";
+  }
+
+  return "https://swachh-city-be.vercel.app";
+})();
 
 const defaultOpenData: OpenDataState = {
   dashboard: {

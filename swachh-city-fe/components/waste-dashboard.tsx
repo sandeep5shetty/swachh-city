@@ -143,8 +143,18 @@ type WardNode = {
 };
 
 const DEFAULT_CITY_CENTER: [number, number] = [77.5946, 12.9716];
-const BACKEND_BASE_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000";
+const BACKEND_BASE_URL = (() => {
+  const configuredUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/+$/, "");
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    return "http://localhost:5000";
+  }
+
+  return "https://swachh-city-be.vercel.app";
+})();
 const BBMP_WARDS = bbmpWardDataset as BbmpWardRecord[];
 
 type BackendBin = {
@@ -3259,7 +3269,9 @@ function FleetOperationsPanel({
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <select
                     value={selectedDriverId}
-                    onChange={(event) => setSelectedDriverId(event.target.value)}
+                    onChange={(event) =>
+                      setSelectedDriverId(event.target.value)
+                    }
                     className="h-10 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none"
                   >
                     <option value="">Select driver name</option>
@@ -3272,9 +3284,7 @@ function FleetOperationsPanel({
                   </select>
                   <Button
                     size="sm"
-                    disabled={
-                      pending || !selectedTruckId || !selectedDriverId
-                    }
+                    disabled={pending || !selectedTruckId || !selectedDriverId}
                     onClick={() =>
                       selectedTruckId
                         ? void onAssignDriver(selectedTruckId, selectedDriverId)
