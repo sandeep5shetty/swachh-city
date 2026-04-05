@@ -1,5 +1,5 @@
-import { WasteDashboard } from "@/components/waste-dashboard";
+import { LandingPage } from "@/components/landing-page";
 
 export default function Home() {
-  return <WasteDashboard />;
+  return <LandingPage />;
 }

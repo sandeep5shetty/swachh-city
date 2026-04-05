@@ -10,6 +10,7 @@ import userRoutes from "./routes/userRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import statsRoutes from "./routes/statsRoutes.js";
 import driverRoutes from "./routes/driverRoutes.js";
+import emailRoutes from "./routes/emailRoutes.js";
 
 
 dotenv.config();
@@ -34,6 +35,7 @@ app.use("/api/complaints", complaintRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/driver", driverRoutes);
+app.use("/api/email", emailRoutes);
 
 
 mongoose.connect(process.env.MONGO_URI)

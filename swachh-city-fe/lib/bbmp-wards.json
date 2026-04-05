@@ -1,0 +1,54 @@
+[
+  {
+    "city": "Bengaluru",
+    "zone": "South",
+    "wardName": "JP Nagar",
+    "wardNumber": 177,
+    "wasteGenerated": 10.82,
+    "vehicleType": "Auto Tipper",
+    "capacity": 0.5,
+    "driverCount": 2,
+    "tripCount": 15,
+    "latitude": 12.9077,
+    "longitude": 77.5856
+  },
+  {
+    "city": "Bengaluru",
+    "zone": "South",
+    "wardName": "Sarakki",
+    "wardNumber": 178,
+    "wasteGenerated": 11.64,
+    "vehicleType": "Auto Tipper",
+    "capacity": 0.5,
+    "driverCount": 2,
+    "tripCount": 14,
+    "latitude": 12.9016,
+    "longitude": 77.5698
+  },
+  {
+    "city": "Bengaluru",
+    "zone": "South",
+    "wardName": "Shakambari Nagar",
+    "wardNumber": 179,
+    "wasteGenerated": 9.7,
+    "vehicleType": "Auto Tipper",
+    "capacity": 0.5,
+    "driverCount": 2,
+    "tripCount": 11,
+    "latitude": 12.9249,
+    "longitude": 77.5661
+  },
+  {
+    "city": "Bengaluru",
+    "zone": "South",
+    "wardName": "Banashankari Temple",
+    "wardNumber": 180,
+    "wasteGenerated": 15.09,
+    "vehicleType": "Auto Tipper",
+    "capacity": 0.5,
+    "driverCount": 2,
+    "tripCount": 23,
+    "latitude": 12.9186,
+    "longitude": 77.5736
+  }
+]

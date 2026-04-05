@@ -46,7 +46,9 @@ export const createTruck = async (req, res) => {
 
 export const getTrucks = async (req, res) => {
   try {
-    const trucks = await Truck.find().populate("driver", "name phone").sort({ createdAt: -1 });
+    const trucks = await Truck.find()
+      .populate("driver", "name phone email")
+      .sort({ createdAt: -1 });
 
     res.json({
       count: trucks.length,
@@ -60,7 +62,9 @@ export const getTrucks = async (req, res) => {
 
 export const getTruckById = async (req, res) => {
   try {
-    const truck = await Truck.findById(req.params.id) .populate("route", "binId area landmark").populate("driver", "name phone");
+    const truck = await Truck.findById(req.params.id)
+      .populate("route", "binId area landmark")
+      .populate("driver", "name phone email");
 
     if (!truck) {
       return res.status(404).json({ message: "Truck not found" });

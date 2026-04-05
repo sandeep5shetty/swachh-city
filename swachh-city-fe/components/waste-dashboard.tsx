@@ -29,6 +29,7 @@ import {
   MarkerPopup,
   type MapViewport,
 } from "@/components/ui/map";
+import bbmpWardDataset from "@/lib/bbmp-wards.json";
 import Image from "next/image";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,8 +46,12 @@ type MapMode = "live" | "heatmap";
 type BinState = "green" | "yellow" | "red";
 type Severity = "low" | "medium" | "high";
 type ReportStatus = "pending" | "in-progress" | "resolved";
-type AuthRole = "citizen" | "admin";
-type AuthMode = "citizen-login" | "citizen-register" | "admin-login";
+type AuthRole = "citizen" | "admin" | "driver";
+type AuthMode =
+  | "citizen-login"
+  | "citizen-register"
+  | "admin-login"
+  | "driver-login";
 type TaskStatus = "pending" | "in-progress" | "completed";
 type TaskPriority = "high" | "medium";
 
@@ -83,6 +88,7 @@ type TwinBin = {
 type FleetTruck = {
   id: string;
   name: string;
+  driverEmail?: string;
   status: "idle" | "en-route" | "collecting" | "busy";
   capacity: number;
   route: string[];
@@ -108,9 +114,35 @@ type GeoPoint = {
   latitude: number;
 };
 
+type BbmpWardRecord = {
+  city: string;
+  zone: string;
+  wardName: string;
+  wardNumber: number;
+  wasteGenerated: number;
+  vehicleType: string;
+  capacity: number;
+  driverCount: number;
+  tripCount: number;
+  latitude: number;
+  longitude: number;
+};
+
+type WardNode = {
+  id: string;
+  label: string;
+  zone: string;
+  wasteGenerated: number;
+  driverCount: number;
+  tripCount: number;
+  latitude: number;
+  longitude: number;
+};
+
 const DEFAULT_CITY_CENTER: [number, number] = [77.5946, 12.9716];
 const BACKEND_BASE_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000";
+const BBMP_WARDS = bbmpWardDataset as BbmpWardRecord[];
 
 type BackendBin = {
   _id: string;
@@ -128,6 +160,12 @@ type BackendTruck = {
   _id: string;
   regNo?: string;
   driverName?: string;
+  driver?: {
+    _id?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+  };
   usedCapacity?: number;
   totalCapacity?: number;
   status?: "IDLE" | "BUSY";
@@ -140,10 +178,21 @@ type BackendComplaint = {
   image?: string;
   location?: { lat?: number; lng?: number };
   createdAt?: string;
+  description?: string;
+  severity?: string;
+  status?: string;
 };
+
+type BackendComplaintResponse =
+  | BackendComplaint[]
+  | {
+      count?: number;
+      data?: BackendComplaint[];
+    };
 
 type BackendAuthResponse = {
   id?: string;
+  _id?: string;
   role?: AuthRole;
   token: string;
 };
@@ -285,6 +334,38 @@ function makeId(prefix: string) {
   return `${prefix}-${Math.floor(Date.now() + Math.random() * 10000)}`;
 }
 
+function toWardId(ward: Pick<BbmpWardRecord, "wardNumber">) {
+  return `ward-${ward.wardNumber}`;
+}
+
+function resolveNearestWard(
+  point: GeoPoint,
+  wards: BbmpWardRecord[],
+): BbmpWardRecord | null {
+  if (!wards.length) {
+    return null;
+  }
+
+  let closestWard = wards[0];
+  let minDistance = toDistanceKm(point, {
+    latitude: closestWard.latitude,
+    longitude: closestWard.longitude,
+  });
+
+  wards.slice(1).forEach((ward) => {
+    const distance = toDistanceKm(point, {
+      latitude: ward.latitude,
+      longitude: ward.longitude,
+    });
+    if (distance < minDistance) {
+      closestWard = ward;
+      minDistance = distance;
+    }
+  });
+
+  return closestWard;
+}
+
 export function WasteDashboard() {
   const [authReady, setAuthReady] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
@@ -293,6 +374,10 @@ export function WasteDashboard() {
   const [authMode, setAuthMode] = useState<AuthMode>("citizen-login");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [adminDriverSubmitting, setAdminDriverSubmitting] = useState(false);
+  const [adminDriverMessage, setAdminDriverMessage] = useState<string | null>(
+    null,
+  );
 
   const [activeNav, setActiveNav] = useState<NavKey>("dashboard");
   const [mapMode, setMapMode] = useState<MapMode>("live");
@@ -338,7 +423,10 @@ export function WasteDashboard() {
     ) as AuthRole | null;
     const userId = window.localStorage.getItem("swachh_auth_user_id");
 
-    if (token && (role === "admin" || role === "citizen")) {
+    if (
+      token &&
+      (role === "admin" || role === "citizen" || role === "driver")
+    ) {
       setAuthToken(token);
       setAuthRole(role);
       setAuthUserId(userId);
@@ -352,16 +440,18 @@ export function WasteDashboard() {
     fallbackRole: AuthRole,
   ) {
     const resolvedRole = payload.role ?? fallbackRole;
+    const resolvedUserId = payload.id ?? payload._id ?? null;
 
     setAuthToken(payload.token);
     setAuthRole(resolvedRole);
-    setAuthUserId(payload.id ?? null);
+    setAuthUserId(resolvedUserId);
     setAuthError(null);
+    setActiveNav(resolvedRole === "driver" ? "driver" : "dashboard");
 
     window.localStorage.setItem("swachh_auth_token", payload.token);
     window.localStorage.setItem("swachh_auth_role", resolvedRole);
-    if (payload.id) {
-      window.localStorage.setItem("swachh_auth_user_id", payload.id);
+    if (resolvedUserId) {
+      window.localStorage.setItem("swachh_auth_user_id", resolvedUserId);
     } else {
       window.localStorage.removeItem("swachh_auth_user_id");
     }
@@ -418,6 +508,27 @@ export function WasteDashboard() {
     }
   }
 
+  async function loginDriver(email: string, password: string) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const payload = await fetchJson<BackendAuthResponse>(
+        "/api/driver/login",
+        {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        },
+      );
+      persistSession(payload, "driver");
+    } catch (error) {
+      setAuthError(
+        error instanceof Error ? error.message : "Driver login failed",
+      );
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
   async function registerCitizen(form: {
     name: string;
     email: string;
@@ -453,6 +564,66 @@ export function WasteDashboard() {
     }
   }
 
+  async function registerDriverByAdmin(form: {
+    name: string;
+    email: string;
+    password: string;
+    phone?: string;
+    gender?: "Male" | "Female" | "Other";
+    licenseNumber: string;
+    age?: string;
+    startDate: string;
+  }) {
+    setAdminDriverSubmitting(true);
+    setAdminDriverMessage(null);
+    try {
+      await fetchJson<BackendAuthResponse>("/api/driver/register", {
+        method: "POST",
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          phone: form.phone,
+          gender: form.gender,
+          licenseNumber: form.licenseNumber,
+          age: form.age ? Number(form.age) : undefined,
+          startDate: form.startDate,
+        }),
+      });
+      setAdminDriverMessage(`Driver ${form.name} registered successfully.`);
+      await loadOperationalData();
+    } catch (error) {
+      setAdminDriverMessage(
+        error instanceof Error ? error.message : "Driver registration failed",
+      );
+    } finally {
+      setAdminDriverSubmitting(false);
+    }
+  }
+
+  const visibleNavItems = useMemo(() => {
+    return navItems.filter((item) => {
+      if (item.key === "reports") {
+        return authRole === "citizen";
+      }
+      if (item.key === "driver") {
+        return authRole === "driver";
+      }
+      return true;
+    });
+  }, [authRole]);
+
+  useEffect(() => {
+    if (!authRole) {
+      return;
+    }
+
+    const stillVisible = visibleNavItems.some((item) => item.key === activeNav);
+    if (!stillVisible) {
+      setActiveNav(authRole === "driver" ? "driver" : "dashboard");
+    }
+  }, [authRole, activeNav, visibleNavItems]);
+
   const loadOperationalData = useCallback(async () => {
     if (!authToken || !authRole) {
       return;
@@ -460,29 +631,36 @@ export function WasteDashboard() {
 
     const authHeader = { Authorization: `Bearer ${authToken}` };
 
-    const [rawBins, rawTrucks, rawComplaints] = await Promise.all(
+    const [rawBins, rawTrucks, rawComplaints] =
       authRole === "admin"
-        ? [
+        ? await Promise.all([
             fetchJson<BackendBin[]>("/api/admin/bins", {
               headers: authHeader,
             }),
             fetchJson<BackendTruck[]>("/api/admin/trucks", {
               headers: authHeader,
             }),
-            fetchJson<BackendComplaint[]>("/api/admin/complaints", {
+            fetchJson<BackendComplaintResponse>("/api/admin/complaints", {
               headers: authHeader,
             }),
-          ]
-        : [
-            fetchJson<{ data?: BackendBin[] } | BackendBin[]>("/api/bins"),
-            fetchJson<{ data?: BackendTruck[] } | BackendTruck[]>(
-              "/api/trucks",
-            ),
-            fetchJson<BackendComplaint[]>("/api/user/my-complaints", {
-              headers: authHeader,
-            }),
-          ],
-    );
+          ])
+        : authRole === "citizen"
+          ? await Promise.all([
+              fetchJson<{ data?: BackendBin[] } | BackendBin[]>("/api/bins"),
+              fetchJson<{ data?: BackendTruck[] } | BackendTruck[]>(
+                "/api/trucks",
+              ),
+              fetchJson<BackendComplaintResponse>("/api/user/my-complaints", {
+                headers: authHeader,
+              }),
+            ])
+          : await Promise.all([
+              fetchJson<{ data?: BackendBin[] } | BackendBin[]>("/api/bins"),
+              fetchJson<{ data?: BackendTruck[] } | BackendTruck[]>(
+                "/api/trucks",
+              ),
+              fetchJson<BackendComplaintResponse>("/api/complaints"),
+            ]);
 
     const backendBins = Array.isArray(rawBins) ? rawBins : (rawBins.data ?? []);
     const mappedBins = backendBins.map((bin, index) => {
@@ -530,6 +708,7 @@ export function WasteDashboard() {
       return {
         id: truck._id,
         name: `${truck.regNo ?? "Truck"}${truck.driverName ? ` · ${truck.driverName}` : ""}`,
+        driverEmail: truck.driver?.email,
         status: truck.status === "BUSY" ? "busy" : "idle",
         capacity: Math.max(
           0,
@@ -548,7 +727,11 @@ export function WasteDashboard() {
       } satisfies FleetTruck;
     });
 
-    const mappedComplaints = rawComplaints
+    const backendComplaints = Array.isArray(rawComplaints)
+      ? rawComplaints
+      : (rawComplaints.data ?? []);
+
+    const mappedComplaints = backendComplaints
       .map((complaint, index) => {
         const lat = complaint.location?.lat;
         const lng = complaint.location?.lng;
@@ -563,10 +746,20 @@ export function WasteDashboard() {
             ? `Issue: ${complaint.issueType}`
             : "Citizen Complaint",
           description:
-            complaint.issueType ?? "Citizen has reported a sanitation issue.",
+            complaint.description ??
+            complaint.issueType ??
+            "Citizen has reported a sanitation issue.",
           location: locationLabel,
-          severity: inferSeverity(complaint.issueType),
-          status: "pending",
+          severity:
+            complaint.severity === "high" || complaint.severity === "medium"
+              ? complaint.severity
+              : inferSeverity(complaint.issueType),
+          status:
+            complaint.status === "resolved"
+              ? "resolved"
+              : complaint.status === "in-progress"
+                ? "in-progress"
+                : "pending",
           timestamp: formatRelativeTime(complaint.createdAt),
           imageUrl: complaint.image,
         } satisfies CitizenReport;
@@ -678,10 +871,24 @@ export function WasteDashboard() {
       return;
     }
 
+    const maxWaste = Math.max(...BBMP_WARDS.map((ward) => ward.wasteGenerated));
+
     const timer = window.setInterval(() => {
       setBins((prev) =>
         prev.map((bin) => {
-          const delta = Math.random() > 0.65 ? 4 : 1.5;
+          const nearestWard = resolveNearestWard(
+            { latitude: bin.latitude, longitude: bin.longitude },
+            BBMP_WARDS,
+          );
+          const ward = nearestWard;
+          const wasteFactor = ward
+            ? ward.wasteGenerated / Math.max(maxWaste, 1)
+            : 0.5;
+          const dynamicPressure = ward
+            ? ward.tripCount / Math.max(ward.driverCount, 1)
+            : 1;
+          const delta =
+            0.9 + wasteFactor * 2.8 + Math.min(1.8, dynamicPressure * 0.15);
           const fill = Math.min(100, Math.round((bin.fill + delta) * 10) / 10);
           return { ...bin, fill };
         }),
@@ -733,6 +940,117 @@ export function WasteDashboard() {
     return reports.filter((report) => report.status === reportFilter);
   }, [reportFilter, reports]);
 
+  const wardNodes = useMemo(() => {
+    return BBMP_WARDS.map(
+      (ward) =>
+        ({
+          id: toWardId(ward),
+          label: `${ward.wardName} (${ward.wardNumber})`,
+          zone: ward.zone,
+          wasteGenerated: ward.wasteGenerated,
+          driverCount: ward.driverCount,
+          tripCount: ward.tripCount,
+          latitude: ward.latitude,
+          longitude: ward.longitude,
+        }) satisfies WardNode,
+    );
+  }, []);
+
+  const wardLookup = useMemo(() => {
+    const lookup = new globalThis.Map<string, WardNode>();
+    wardNodes.forEach((ward) => lookup.set(ward.id, ward));
+    return lookup;
+  }, [wardNodes]);
+
+  const wardByBinId = useMemo(() => {
+    const map = new globalThis.Map<string, WardNode>();
+    geoBins.forEach((bin) => {
+      const ward = resolveNearestWard(
+        { latitude: bin.latitude, longitude: bin.longitude },
+        BBMP_WARDS,
+      );
+      if (!ward) {
+        return;
+      }
+      map.set(bin.id, {
+        id: toWardId(ward),
+        label: `${ward.wardName} (${ward.wardNumber})`,
+        zone: ward.zone,
+        wasteGenerated: ward.wasteGenerated,
+        driverCount: ward.driverCount,
+        tripCount: ward.tripCount,
+        latitude: ward.latitude,
+        longitude: ward.longitude,
+      });
+    });
+    return map;
+  }, [geoBins]);
+
+  const wardStats = useMemo(() => {
+    return wardNodes.map((ward) => {
+      const binsInWard = geoBins.filter(
+        (bin) => wardByBinId.get(bin.id)?.id === ward.id,
+      );
+      const avgFill = binsInWard.length
+        ? Math.round(
+            binsInWard.reduce((sum, bin) => sum + bin.fill, 0) /
+              binsInWard.length,
+          )
+        : 0;
+      const maxFill = binsInWard.length
+        ? Math.max(...binsInWard.map((bin) => bin.fill))
+        : 0;
+
+      const unresolvedInWard = reports.filter((report) => {
+        if (report.status === "resolved") {
+          return false;
+        }
+        const parsed = parseLatLng(report.location);
+        if (!parsed) {
+          return false;
+        }
+        const nearestWard = resolveNearestWard(
+          { latitude: parsed.lat, longitude: parsed.lng },
+          BBMP_WARDS,
+        );
+        return nearestWard ? toWardId(nearestWard) === ward.id : false;
+      }).length;
+
+      const operationalPressure = Number(
+        (
+          ward.wasteGenerated / 5 +
+          avgFill / 20 +
+          unresolvedInWard * 0.8 +
+          ward.tripCount / Math.max(ward.driverCount, 1)
+        ).toFixed(1),
+      );
+
+      return {
+        ward,
+        binsInWard,
+        avgFill,
+        maxFill,
+        unresolvedInWard,
+        operationalPressure,
+      };
+    });
+  }, [geoBins, reports, wardByBinId, wardNodes]);
+
+  const highLoadWards = useMemo(() => {
+    return wardStats
+      .filter(
+        (item) =>
+          item.ward.wasteGenerated >= 12 ||
+          item.maxFill >= 85 ||
+          item.unresolvedInWard >= 2,
+      )
+      .sort((a, b) => b.operationalPressure - a.operationalPressure);
+  }, [wardStats]);
+
+  const highLoadWardIds = useMemo(() => {
+    return new Set(highLoadWards.map((item) => item.ward.id));
+  }, [highLoadWards]);
+
   const unreadNotifications = useMemo(
     () => notifications.filter((item) => !item.read).length,
     [notifications],
@@ -751,6 +1069,18 @@ export function WasteDashboard() {
     return map;
   }, [driverTasks]);
 
+  const taskCountByTruck = useMemo(() => {
+    const map = new globalThis.Map<string, number>();
+    geoTrucks.forEach((truck) => map.set(truck.id, 0));
+    driverTasks.forEach((task) => {
+      if (!task.assignedTruckId || task.status === "completed") {
+        return;
+      }
+      map.set(task.assignedTruckId, (map.get(task.assignedTruckId) ?? 0) + 1);
+    });
+    return map;
+  }, [driverTasks, geoTrucks]);
+
   const pushNotification = useCallback(
     (message: string, priority: TaskPriority) => {
       const item: DriverNotification = {
@@ -767,8 +1097,32 @@ export function WasteDashboard() {
     [],
   );
 
+  const triggerDriverEmailAlert = useCallback(
+    async (input: {
+      truckId: string;
+      alertType: "bin-full" | "citizen-report";
+      locationLabel: string;
+      priority: TaskPriority;
+      taskId: string;
+    }) => {
+      try {
+        await fetchJson<{ message: string }>("/api/email/driver-alert", {
+          method: "POST",
+          body: JSON.stringify(input),
+        });
+      } catch (error) {
+        setDataError(
+          error instanceof Error
+            ? `Email alert failed: ${error.message}`
+            : "Email alert failed",
+        );
+      }
+    },
+    [],
+  );
+
   const findNearestIdleTruck = useCallback(
-    (target: GeoPoint) => {
+    (target: GeoPoint, ward: WardNode | null) => {
       const busyTruckIds = new Set(
         driverTasks
           .filter((task) => task.status !== "completed" && task.assignedTruckId)
@@ -784,26 +1138,47 @@ export function WasteDashboard() {
         return null;
       }
 
-      let nearest = candidatePool[0];
-      let nearestDistance = toDistanceKm(target, {
-        latitude: nearest.latitude,
-        longitude: nearest.longitude,
+      const maxTrips = Math.max(...BBMP_WARDS.map((item) => item.tripCount));
+      const normalizedWardTrips = ward
+        ? ward.tripCount / Math.max(maxTrips, 1)
+        : 0.5;
+      const availabilityPenalty = ward
+        ? 1 / Math.max(ward.driverCount, 1)
+        : 0.5;
+
+      let selectedTruck = candidatePool[0];
+      let selectedDistance = toDistanceKm(target, {
+        latitude: selectedTruck.latitude,
+        longitude: selectedTruck.longitude,
       });
+      let selectedScore =
+        selectedDistance +
+        (taskCountByTruck.get(selectedTruck.id) ?? 0) * 1.8 +
+        normalizedWardTrips * 2.4 +
+        availabilityPenalty * 1.2;
 
       candidatePool.slice(1).forEach((truck) => {
         const distance = toDistanceKm(target, {
           latitude: truck.latitude,
           longitude: truck.longitude,
         });
-        if (distance < nearestDistance) {
-          nearest = truck;
-          nearestDistance = distance;
+
+        const workloadScore =
+          distance +
+          (taskCountByTruck.get(truck.id) ?? 0) * 1.8 +
+          normalizedWardTrips * 2.4 +
+          availabilityPenalty * 1.2;
+
+        if (workloadScore < selectedScore) {
+          selectedTruck = truck;
+          selectedDistance = distance;
+          selectedScore = workloadScore;
         }
       });
 
-      return { truck: nearest, distanceKm: nearestDistance };
+      return { truck: selectedTruck, distanceKm: selectedDistance };
     },
-    [driverTasks, geoTrucks],
+    [driverTasks, geoTrucks, taskCountByTruck],
   );
 
   const createTask = useCallback(
@@ -832,32 +1207,57 @@ export function WasteDashboard() {
         return;
       }
 
-      const nearest = findNearestIdleTruck({
-        latitude: bin.latitude,
-        longitude: bin.longitude,
-      });
+      const ward = wardByBinId.get(bin.id) ?? null;
+      const nearest = findNearestIdleTruck(
+        {
+          latitude: bin.latitude,
+          longitude: bin.longitude,
+        },
+        ward,
+      );
+
+      const wardIsHighLoad = ward
+        ? ward.wasteGenerated >= 12 || ward.tripCount >= 20
+        : false;
+      const priority: TaskPriority =
+        bin.fill >= 88 || wardIsHighLoad ? "high" : "medium";
+      const wardLabel = ward ? ` · ${ward.label}` : "";
 
       const task = createTask({
         title: `Bin ${bin.id} requires pickup`,
-        description: `Fill level reached ${bin.fill}% near ${bin.label}.`,
-        priority: "medium",
+        description: `Fill level reached ${bin.fill}% near ${bin.label}${wardLabel}.`,
+        priority,
         status: "pending",
         source: "bin",
-        locationLabel: `${bin.label} (${bin.id})`,
+        locationLabel: `${bin.label} (${bin.id})${wardLabel}`,
         location: { latitude: bin.latitude, longitude: bin.longitude },
         assignedTruckId: nearest?.truck.id ?? null,
         distanceKm: nearest ? Number(nearest.distanceKm.toFixed(2)) : null,
       });
 
-      pushNotification(`🚨 Bin ${bin.id} is full near ${bin.label}`, "medium");
+      pushNotification(`🚨 Bin ${bin.id} is full near ${bin.label}`, priority);
       if (task.assignedTruckId && nearest) {
         pushNotification(
           `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
-          "medium",
+          priority,
         );
+        void triggerDriverEmailAlert({
+          truckId: nearest.truck.id,
+          alertType: "bin-full",
+          locationLabel: task.locationLabel,
+          priority,
+          taskId: task.id,
+        });
       }
     },
-    [createTask, driverTasks, findNearestIdleTruck, pushNotification],
+    [
+      createTask,
+      driverTasks,
+      findNearestIdleTruck,
+      pushNotification,
+      triggerDriverEmailAlert,
+      wardByBinId,
+    ],
   );
 
   const assignTaskFromComplaint = useCallback(
@@ -872,9 +1272,20 @@ export function WasteDashboard() {
         return;
       }
 
-      const nearest = findNearestIdleTruck(coords);
+      const nearestWardRaw = resolveNearestWard(
+        { latitude: coords.latitude, longitude: coords.longitude },
+        BBMP_WARDS,
+      );
+      const nearestWard = nearestWardRaw
+        ? (wardLookup.get(toWardId(nearestWardRaw)) ?? null)
+        : null;
+
+      const nearest = findNearestIdleTruck(coords, nearestWard);
+      const dataPressure = nearestWard
+        ? nearestWard.wasteGenerated >= 12 || nearestWard.tripCount >= 20
+        : false;
       const priority: TaskPriority =
-        report.severity === "high" ? "high" : "medium";
+        report.severity === "high" || dataPressure ? "high" : "medium";
 
       const task = createTask({
         title: `Complaint ${report.id} requires action`,
@@ -882,7 +1293,9 @@ export function WasteDashboard() {
         priority,
         status: "pending",
         source: "complaint",
-        locationLabel: report.location,
+        locationLabel: nearestWard
+          ? `${report.location} · ${nearestWard.label}`
+          : report.location,
         location: coords,
         assignedTruckId: nearest?.truck.id ?? null,
         distanceKm: nearest ? Number(nearest.distanceKm.toFixed(2)) : null,
@@ -897,9 +1310,23 @@ export function WasteDashboard() {
           `🚛 ${nearest.truck.name} assigned (${nearest.distanceKm.toFixed(2)} km)`,
           priority,
         );
+        void triggerDriverEmailAlert({
+          truckId: nearest.truck.id,
+          alertType: "citizen-report",
+          locationLabel: task.locationLabel,
+          priority,
+          taskId: task.id,
+        });
       }
     },
-    [createTask, driverTasks, findNearestIdleTruck, pushNotification],
+    [
+      createTask,
+      driverTasks,
+      findNearestIdleTruck,
+      pushNotification,
+      triggerDriverEmailAlert,
+      wardLookup,
+    ],
   );
 
   useEffect(() => {
@@ -934,6 +1361,10 @@ export function WasteDashboard() {
   }, [assignTaskFromComplaint, reports]);
 
   function acceptTask(taskId: string) {
+    if (authRole !== "driver") {
+      setDataError("Only driver accounts can accept tasks.");
+      return;
+    }
     setDriverTasks((prev) =>
       prev.map((task) =>
         task.id === taskId ? { ...task, status: "in-progress" } : task,
@@ -943,6 +1374,10 @@ export function WasteDashboard() {
   }
 
   function completeTask(taskId: string) {
+    if (authRole !== "driver") {
+      setDataError("Only driver accounts can complete tasks.");
+      return;
+    }
     setDriverTasks((prev) =>
       prev.map((task) =>
         task.id === taskId ? { ...task, status: "completed" } : task,
@@ -966,7 +1401,7 @@ export function WasteDashboard() {
       !descriptionInput.trim() ||
       isImageUploading ||
       !authToken ||
-      !authRole
+      authRole !== "citizen"
     ) {
       return;
     }
@@ -979,15 +1414,9 @@ export function WasteDashboard() {
         lng: fallbackCenter[0],
       };
 
-      const complaintPath =
-        authRole === "citizen" ? "/api/user/complaint" : "/api/complaints";
-
-      await fetchJson<BackendComplaint>(complaintPath, {
+      await fetchJson<BackendComplaint>("/api/user/complaint", {
         method: "POST",
-        headers:
-          authRole === "citizen"
-            ? { Authorization: `Bearer ${authToken}` }
-            : undefined,
+        headers: { Authorization: `Bearer ${authToken}` },
         body: JSON.stringify({
           issueType: `${severityInput.toUpperCase()}: ${descriptionInput.trim()}`,
           image: uploadedImageUrl ?? undefined,
@@ -1109,6 +1538,7 @@ export function WasteDashboard() {
         onCitizenLogin={loginCitizen}
         onCitizenRegister={registerCitizen}
         onAdminLogin={loginAdmin}
+        onDriverLogin={loginDriver}
       />
     );
   }
@@ -1151,7 +1581,7 @@ export function WasteDashboard() {
           </div>
 
           <nav className="mt-2 flex-1 space-y-1.5 px-3 pb-4">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeNav === item.key;
               const badge =
@@ -1194,12 +1624,18 @@ export function WasteDashboard() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-lg font-semibold leading-none text-white">
-                      {authRole === "admin" ? "Admin User" : "Citizen User"}
+                      {authRole === "admin"
+                        ? "Admin User"
+                        : authRole === "driver"
+                          ? "Driver User"
+                          : "Citizen User"}
                     </p>
                     <p className="mt-1 text-sm text-slate-400">
                       {authRole === "admin"
                         ? "Control Center"
-                        : "Field Reporter"}
+                        : authRole === "driver"
+                          ? "Fleet Execution"
+                          : "Field Reporter"}
                     </p>
                     {authUserId ? (
                       <p className="mt-2 break-all rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[11px] font-medium text-slate-400">
@@ -1330,10 +1766,122 @@ export function WasteDashboard() {
                   />
                 </section>
 
+                <section className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+                  <Card className="border-white/12 bg-[#111520]">
+                    <CardContent className="p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div>
+                          <h3 className="text-lg font-semibold text-white">
+                            Waste Per Ward
+                          </h3>
+                          <p className="text-sm text-slate-400">
+                            BBMP-inspired ward data powering fill simulation
+                          </p>
+                        </div>
+                        <Badge tone="info">{wardNodes.length} wards</Badge>
+                      </div>
+                      <div className="space-y-3">
+                        {wardStats.map((item) => {
+                          const width = Math.min(
+                            100,
+                            Math.round((item.ward.wasteGenerated / 16) * 100),
+                          );
+
+                          return (
+                            <div
+                              key={item.ward.id}
+                              className="rounded-lg border border-white/10 bg-black/20 p-3"
+                            >
+                              <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                                <span className="font-medium text-white">
+                                  {item.ward.label}
+                                </span>
+                                <span>
+                                  {item.ward.wasteGenerated.toFixed(2)} t/day
+                                </span>
+                              </div>
+                              <div className="mt-2 h-2 rounded-full bg-slate-800">
+                                <div
+                                  className="h-full rounded-full bg-linear-to-r from-cyan-400 to-emerald-300"
+                                  style={{ width: `${width}%` }}
+                                />
+                              </div>
+                              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                                <span>Avg fill: {item.avgFill}%</span>
+                                <span>
+                                  Drivers: {item.ward.driverCount} · Trips:{" "}
+                                  {item.ward.tripCount}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-white/12 bg-[#111520]">
+                    <CardContent className="p-4">
+                      <h3 className="text-lg font-semibold text-white">
+                        High-Load Zones
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Priority combines waste output, bin fill, and complaints
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        {!highLoadWards.length ? (
+                          <p className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-400">
+                            No high-load wards at the moment.
+                          </p>
+                        ) : (
+                          highLoadWards.map((item) => (
+                            <div
+                              key={item.ward.id}
+                              className="rounded-lg border border-rose-300/20 bg-rose-500/8 px-3 py-2"
+                            >
+                              <p className="text-sm font-medium text-white">
+                                {item.ward.label} ({item.ward.zone})
+                              </p>
+                              <p className="mt-1 text-xs text-slate-300">
+                                Pressure {item.operationalPressure} · Max bin{" "}
+                                {item.maxFill}% · Unresolved{" "}
+                                {item.unresolvedInWard}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <p className="text-slate-400">Active trucks</p>
+                          <p className="mt-1 text-xl font-semibold text-white">
+                            {activeFleet}/{trucks.length}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <p className="text-slate-400">Total daily waste</p>
+                          <p className="mt-1 text-xl font-semibold text-white">
+                            {wardNodes
+                              .reduce(
+                                (sum, ward) => sum + ward.wasteGenerated,
+                                0,
+                              )
+                              .toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </section>
+
                 <section className="grid gap-4 xl:grid-cols-[minmax(0,1.85fr)_320px]">
                   <TwinMapPanel
                     bins={geoBins}
                     trucks={geoTrucks}
+                    wardNodes={wardNodes}
+                    wardByBinId={wardByBinId}
+                    highLoadWardIds={highLoadWardIds}
                     mapMode={mapMode}
                     routeCoordinates={routeCoordinates}
                     selectedBinId={selectedBinId}
@@ -1369,26 +1917,38 @@ export function WasteDashboard() {
                 </section>
 
                 <section className="grid gap-4 lg:grid-cols-2">
-                  <ReportsPanel
-                    reports={reports}
-                    onOpenReports={() => setActiveNav("reports")}
-                    compact
-                  />
-                  <ManualReportPanel
-                    locationInput={locationInput}
-                    descriptionInput={descriptionInput}
-                    severityInput={severityInput}
-                    imageName={imageName}
-                    uploadedImageUrl={uploadedImageUrl}
-                    isImageUploading={isImageUploading}
-                    imageUploadError={imageUploadError}
-                    setLocationInput={setLocationInput}
-                    setDescriptionInput={setDescriptionInput}
-                    setSeverityInput={setSeverityInput}
-                    setImageName={setImageName}
-                    onUploadImage={uploadImageToCloudinary}
-                    onSubmit={submitReport}
-                  />
+                  {authRole === "citizen" ? (
+                    <>
+                      <ReportsPanel
+                        reports={reports}
+                        onOpenReports={() => setActiveNav("reports")}
+                        compact
+                      />
+                      <ManualReportPanel
+                        locationInput={locationInput}
+                        descriptionInput={descriptionInput}
+                        severityInput={severityInput}
+                        imageName={imageName}
+                        uploadedImageUrl={uploadedImageUrl}
+                        isImageUploading={isImageUploading}
+                        imageUploadError={imageUploadError}
+                        setLocationInput={setLocationInput}
+                        setDescriptionInput={setDescriptionInput}
+                        setSeverityInput={setSeverityInput}
+                        setImageName={setImageName}
+                        onUploadImage={uploadImageToCloudinary}
+                        onSubmit={submitReport}
+                      />
+                    </>
+                  ) : authRole === "admin" ? (
+                    <AdminDriverRegistrationPanel
+                      isSubmitting={adminDriverSubmitting}
+                      feedback={adminDriverMessage}
+                      onRegister={registerDriverByAdmin}
+                    />
+                  ) : (
+                    <ReportsPanel reports={reports} compact />
+                  )}
                 </section>
               </>
             ) : null}
@@ -1398,6 +1958,9 @@ export function WasteDashboard() {
                 <TwinMapPanel
                   bins={geoBins}
                   trucks={geoTrucks}
+                  wardNodes={wardNodes}
+                  wardByBinId={wardByBinId}
+                  highLoadWardIds={highLoadWardIds}
                   mapMode={mapMode}
                   routeCoordinates={routeCoordinates}
                   selectedBinId={selectedBinId}
@@ -1454,7 +2017,7 @@ export function WasteDashboard() {
               </section>
             ) : null}
 
-            {activeNav === "driver" ? (
+            {activeNav === "driver" && authRole === "driver" ? (
               <DriverDashboard
                 trucks={geoTrucks}
                 bins={geoBins}
@@ -1462,6 +2025,7 @@ export function WasteDashboard() {
                 onAcceptTask={acceptTask}
                 onCompleteTask={completeTask}
                 tasksByTruck={tasksByTruck}
+                canManageTasks={authRole === "driver"}
               />
             ) : null}
 
@@ -1516,29 +2080,33 @@ export function WasteDashboard() {
               </section>
             ) : null}
 
-            {activeNav === "reports" ? (
-              <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            {activeNav === "reports" && authRole === "citizen" ? (
+              <section
+                className={`grid gap-4 ${authRole === "citizen" ? "xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]" : ""}`}
+              >
                 <ReportsPanel
                   reports={filteredReports}
                   compact={false}
                   filter={reportFilter}
                   onFilterChange={setReportFilter}
                 />
-                <ManualReportPanel
-                  locationInput={locationInput}
-                  descriptionInput={descriptionInput}
-                  severityInput={severityInput}
-                  imageName={imageName}
-                  uploadedImageUrl={uploadedImageUrl}
-                  isImageUploading={isImageUploading}
-                  imageUploadError={imageUploadError}
-                  setLocationInput={setLocationInput}
-                  setDescriptionInput={setDescriptionInput}
-                  setSeverityInput={setSeverityInput}
-                  setImageName={setImageName}
-                  onUploadImage={uploadImageToCloudinary}
-                  onSubmit={submitReport}
-                />
+                {authRole === "citizen" ? (
+                  <ManualReportPanel
+                    locationInput={locationInput}
+                    descriptionInput={descriptionInput}
+                    severityInput={severityInput}
+                    imageName={imageName}
+                    uploadedImageUrl={uploadedImageUrl}
+                    isImageUploading={isImageUploading}
+                    imageUploadError={imageUploadError}
+                    setLocationInput={setLocationInput}
+                    setDescriptionInput={setDescriptionInput}
+                    setSeverityInput={setSeverityInput}
+                    setImageName={setImageName}
+                    onUploadImage={uploadImageToCloudinary}
+                    onSubmit={submitReport}
+                  />
+                ) : null}
               </section>
             ) : null}
 
@@ -1628,6 +2196,7 @@ function AuthPanel({
   onCitizenLogin,
   onCitizenRegister,
   onAdminLogin,
+  onDriverLogin,
 }: {
   mode: AuthMode;
   setMode: (mode: AuthMode) => void;
@@ -1643,6 +2212,7 @@ function AuthPanel({
     gender?: "Male" | "Female" | "Other";
   }) => Promise<void>;
   onAdminLogin: (email: string, password: string) => Promise<void>;
+  onDriverLogin: (email: string, password: string) => Promise<void>;
 }) {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -1656,6 +2226,9 @@ function AuthPanel({
     "Male" | "Female" | "Other" | ""
   >("");
 
+  const isCitizenRegister = mode === "citizen-register";
+  const isRegisterMode = isCitizenRegister;
+
   async function submitCurrentMode() {
     if (mode === "citizen-login") {
       await onCitizenLogin(loginEmail.trim(), loginPassword);
@@ -1664,6 +2237,11 @@ function AuthPanel({
 
     if (mode === "admin-login") {
       await onAdminLogin(loginEmail.trim(), loginPassword);
+      return;
+    }
+
+    if (mode === "driver-login") {
+      await onDriverLogin(loginEmail.trim(), loginPassword);
       return;
     }
 
@@ -1704,7 +2282,7 @@ function AuthPanel({
           </div>
         </div>
 
-        <div className="mb-5 grid grid-cols-3 gap-2 rounded-lg border border-white/10 bg-black/25 p-1">
+        <div className="mb-5 grid grid-cols-2 gap-2 rounded-lg border border-white/10 bg-black/25 p-1 sm:grid-cols-4">
           <button
             type="button"
             onClick={() => setMode("citizen-login")}
@@ -1726,6 +2304,13 @@ function AuthPanel({
           >
             Admin Login
           </button>
+          <button
+            type="button"
+            onClick={() => setMode("driver-login")}
+            className={`rounded-md px-2 py-2 text-xs ${mode === "driver-login" ? "bg-white/12 text-white" : "text-slate-400"}`}
+          >
+            Driver Login
+          </button>
         </div>
 
         <form
@@ -1735,7 +2320,7 @@ function AuthPanel({
             await submitCurrentMode();
           }}
         >
-          {mode !== "citizen-register" ? (
+          {!isRegisterMode ? (
             <>
               <input
                 type="email"
@@ -1803,13 +2388,15 @@ function AuthPanel({
                   <option value="Other">Other</option>
                 </select>
               </div>
-              <input
-                type="text"
-                value={registerAddress}
-                onChange={(event) => setRegisterAddress(event.target.value)}
-                className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
-                placeholder="Address (optional)"
-              />
+              {isCitizenRegister ? (
+                <input
+                  type="text"
+                  value={registerAddress}
+                  onChange={(event) => setRegisterAddress(event.target.value)}
+                  className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-400/60"
+                  placeholder="Address (optional)"
+                />
+              ) : null}
             </>
           )}
 
@@ -1830,11 +2417,156 @@ function AuthPanel({
                 ? "Register as Citizen"
                 : mode === "admin-login"
                   ? "Login as Admin"
-                  : "Login as Citizen"}
+                  : mode === "driver-login"
+                    ? "Login as Driver"
+                    : "Login as Citizen"}
           </button>
         </form>
       </div>
     </main>
+  );
+}
+
+function AdminDriverRegistrationPanel({
+  isSubmitting,
+  feedback,
+  onRegister,
+}: {
+  isSubmitting: boolean;
+  feedback: string | null;
+  onRegister: (form: {
+    name: string;
+    email: string;
+    password: string;
+    phone?: string;
+    gender?: "Male" | "Female" | "Other";
+    licenseNumber: string;
+    age?: string;
+    startDate: string;
+  }) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [gender, setGender] = useState<"Male" | "Female" | "Other" | "">("");
+  const [licenseNumber, setLicenseNumber] = useState("");
+  const [age, setAge] = useState("");
+  const [startDate, setStartDate] = useState("");
+
+  return (
+    <Card className="border-white/12 bg-[#111520]">
+      <CardContent className="p-4">
+        <div className="mb-4">
+          <h3 className="text-lg font-semibold text-white">Register Driver</h3>
+          <p className="mt-1 text-sm text-slate-400">
+            Admin-only onboarding for new driver accounts.
+          </p>
+        </div>
+
+        <form
+          className="space-y-3"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            await onRegister({
+              name: name.trim(),
+              email: email.trim(),
+              password,
+              phone: phone.trim() || undefined,
+              gender: gender || undefined,
+              licenseNumber: licenseNumber.trim(),
+              age: age.trim() || undefined,
+              startDate,
+            });
+          }}
+        >
+          <input
+            type="text"
+            required
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+            placeholder="Driver name"
+          />
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+            placeholder="Driver email"
+          />
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+            placeholder="Temporary password"
+          />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input
+              type="text"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+              placeholder="Phone (optional)"
+            />
+            <select
+              value={gender}
+              onChange={(event) =>
+                setGender(
+                  event.target.value as "Male" | "Female" | "Other" | "",
+                )
+              }
+              className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+            >
+              <option value="">Gender (optional)</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <input
+            type="text"
+            required
+            value={licenseNumber}
+            onChange={(event) => setLicenseNumber(event.target.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+            placeholder="License number"
+          />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input
+              type="number"
+              min={18}
+              value={age}
+              onChange={(event) => setAge(event.target.value)}
+              className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/60"
+              placeholder="Age (optional)"
+            />
+            <input
+              type="date"
+              required
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
+              className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+            />
+          </div>
+
+          {feedback ? (
+            <p
+              className={`rounded-lg border px-3 py-2 text-xs ${feedback.toLowerCase().includes("failed") || feedback.toLowerCase().includes("error") ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"}`}
+            >
+              {feedback}
+            </p>
+          ) : null}
+
+          <Button type="submit" disabled={isSubmitting} className="w-full">
+            {isSubmitting ? "Registering..." : "Create Driver Account"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1897,6 +2629,7 @@ function DriverDashboard({
   tasksByTruck,
   onAcceptTask,
   onCompleteTask,
+  canManageTasks,
 }: {
   trucks: Array<FleetTruck & GeoPoint>;
   bins: Array<TwinBin & GeoPoint>;
@@ -1904,6 +2637,7 @@ function DriverDashboard({
   tasksByTruck: Map<string, DriverTask[]>;
   onAcceptTask: (taskId: string) => void;
   onCompleteTask: (taskId: string) => void;
+  canManageTasks: boolean;
 }) {
   const openTasks = tasks.filter((task) => task.status !== "completed");
 
@@ -1944,6 +2678,7 @@ function DriverDashboard({
                   task={task}
                   onAcceptTask={onAcceptTask}
                   onCompleteTask={onCompleteTask}
+                  canManageTasks={canManageTasks}
                 />
               ))
             )}
@@ -2003,10 +2738,12 @@ function TaskCard({
   task,
   onAcceptTask,
   onCompleteTask,
+  canManageTasks,
 }: {
   task: DriverTask;
   onAcceptTask: (taskId: string) => void;
   onCompleteTask: (taskId: string) => void;
+  canManageTasks: boolean;
 }) {
   const statusTone =
     task.status === "completed"
@@ -2036,7 +2773,7 @@ function TaskCard({
           <Badge tone="neutral">{task.distanceKm.toFixed(2)} km away</Badge>
         ) : null}
 
-        {task.status === "pending" ? (
+        {canManageTasks && task.status === "pending" ? (
           <Button
             size="sm"
             className="ml-auto"
@@ -2045,7 +2782,7 @@ function TaskCard({
             Accept Task
           </Button>
         ) : null}
-        {task.status === "in-progress" ? (
+        {canManageTasks && task.status === "in-progress" ? (
           <Button
             size="sm"
             className="ml-auto"
@@ -2063,6 +2800,9 @@ function TaskCard({
 function TwinMapPanel({
   bins,
   trucks,
+  wardNodes,
+  wardByBinId,
+  highLoadWardIds,
   mapMode,
   routeCoordinates,
   selectedBinId,
@@ -2076,6 +2816,9 @@ function TwinMapPanel({
 }: {
   bins: Array<TwinBin & GeoPoint>;
   trucks: Array<FleetTruck & GeoPoint>;
+  wardNodes: WardNode[];
+  wardByBinId: Map<string, WardNode>;
+  highLoadWardIds: Set<string>;
   mapMode: MapMode;
   routeCoordinates: Array<{ id: string; coordinates: [number, number][] }>;
   selectedBinId: string | null;
@@ -2137,6 +2880,41 @@ function TwinMapPanel({
             />
           ))}
 
+          {wardNodes.map((ward) => {
+            const isHighLoad = highLoadWardIds.has(ward.id);
+            return (
+              <MapMarker
+                key={`ward-${ward.id}`}
+                longitude={ward.longitude}
+                latitude={ward.latitude}
+              >
+                <MarkerContent>
+                  <div
+                    className={`flex h-7 w-7 items-center justify-center rounded-full border text-[10px] font-semibold ${isHighLoad ? "border-rose-300/60 bg-rose-500/20 text-rose-100" : "border-cyan-300/45 bg-cyan-400/10 text-cyan-100"}`}
+                    title={`${ward.label} · ${ward.zone}`}
+                  >
+                    <MapPin className="h-3.5 w-3.5" />
+                  </div>
+                </MarkerContent>
+                <MarkerPopup
+                  className="min-w-[210px] border border-white/15 bg-[#0b1220]/95 px-3 py-2 text-slate-100 shadow-2xl backdrop-blur-md"
+                  offset={18}
+                >
+                  <div className="space-y-1 text-xs">
+                    <p className="font-semibold text-white">{ward.label}</p>
+                    <p className="text-slate-300">Zone: {ward.zone}</p>
+                    <p className="text-slate-300">
+                      Waste: {ward.wasteGenerated.toFixed(2)} t/day
+                    </p>
+                    <p className="text-slate-300">
+                      Drivers: {ward.driverCount} · Trips: {ward.tripCount}
+                    </p>
+                  </div>
+                </MarkerPopup>
+              </MapMarker>
+            );
+          })}
+
           {mapMode === "heatmap"
             ? bins.map((bin) => (
                 <MapMarker
@@ -2159,6 +2937,7 @@ function TwinMapPanel({
 
           {bins.map((bin) => {
             const state = getBinState(bin.fill);
+            const ward = wardByBinId.get(bin.id);
             return (
               <MapMarker
                 key={bin.id}
@@ -2183,6 +2962,12 @@ function TwinMapPanel({
                   <div className="space-y-1 text-xs">
                     <p className="font-semibold text-white">{bin.label}</p>
                     <p className="text-slate-300">Bin {bin.id}</p>
+                    {ward ? (
+                      <>
+                        <p className="text-slate-300">Ward: {ward.label}</p>
+                        <p className="text-slate-300">Zone: {ward.zone}</p>
+                      </>
+                    ) : null}
                     <p className="text-slate-300">Fill: {bin.fill}%</p>
                   </div>
                 </MarkerPopup>
@@ -2480,63 +3265,48 @@ function ManualReportPanel({
             accept="image/*"
             onChange={async (event) => {
               const file = event.target.files?.[0];
-              setImageName(file ? file.name : "No image selected");
-              if (file) {
-                await onUploadImage(file);
+              if (!file) {
+                return;
               }
+              setImageName(file.name);
+              await onUploadImage(file);
             }}
           />
         </label>
 
-        {uploadedImageUrl ? (
-          <div className="space-y-2">
-            <div className="overflow-hidden rounded-lg border border-emerald-400/30 bg-black/30">
-              {previewUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={previewUrl}
-                  alt="Uploaded report preview"
-                  className="h-44 w-full object-cover"
-                  onError={(event) => {
-                    const img = event.currentTarget;
-                    if (img.dataset.fallback !== "1" && uploadedImageUrl) {
-                      img.dataset.fallback = "1";
-                      img.src = uploadedImageUrl;
-                      return;
-                    }
-                    img.style.display = "none";
-                  }}
-                />
-              ) : (
-                <div className="flex h-44 items-center justify-center text-xs text-slate-400">
-                  Uploaded image could not be previewed. Use the link below.
-                </div>
-              )}
-            </div>
-
-            <a
-              href={uploadedImageUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-300 underline-offset-4 hover:underline"
-            >
-              Open full uploaded image
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </div>
+        {imageUploadError ? (
+          <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+            {imageUploadError}
+          </p>
         ) : null}
 
-        {imageUploadError ? (
-          <p className="text-xs text-rose-300">{imageUploadError}</p>
+        {previewUrl ? (
+          <div className="overflow-hidden rounded-lg border border-white/10 bg-black/35">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewUrl}
+              alt="Complaint preview"
+              className="h-44 w-full object-cover"
+              onError={(event) => {
+                const img = event.currentTarget;
+                if (img.dataset.fallback !== "1" && uploadedImageUrl) {
+                  img.dataset.fallback = "1";
+                  img.src = uploadedImageUrl;
+                  return;
+                }
+                img.style.display = "none";
+              }}
+            />
+          </div>
         ) : null}
 
         <button
           type="button"
           onClick={onSubmit}
           disabled={isImageUploading}
-          className="h-10 w-full rounded-lg bg-white text-sm font-semibold text-black transition hover:bg-slate-200"
+          className="h-10 w-full rounded-lg bg-white text-sm font-semibold text-black transition hover:bg-slate-200 disabled:opacity-60"
         >
-          {isImageUploading ? "Please wait..." : "Submit Report"}
+          Submit Report
         </button>
       </div>
     </div>

@@ -8,6 +8,7 @@ import Complaint from "../models/complaintModel.js";
 import Collection from "../models/collectionModel.js";
 import TruckLocation from "../models/truckLocationModel.js";
 import User from "../models/userModel.js";
+import Driver from "../models/driverModel.js";
 
 dotenv.config();
 
@@ -199,6 +200,49 @@ const demoUsers = [
     },
 ];
 
+const demoDrivers = [
+    {
+        name: "Manjunath R",
+        email: "manjunath.driver@swachh.city",
+        password: "driver123",
+        phone: "9000000001",
+        gender: "Male",
+        licenseNumber: "DL-BLR-001-2026",
+        age: 32,
+        startDate: new Date("2023-01-10"),
+    },
+    {
+        name: "Shalini P",
+        email: "shalini.driver@swachh.city",
+        password: "driver123",
+        phone: "9000000002",
+        gender: "Female",
+        licenseNumber: "DL-BLR-002-2026",
+        age: 30,
+        startDate: new Date("2022-07-05"),
+    },
+    {
+        name: "Imran K",
+        email: "imran.driver@swachh.city",
+        password: "driver123",
+        phone: "9000000003",
+        gender: "Male",
+        licenseNumber: "DL-BLR-003-2026",
+        age: 35,
+        startDate: new Date("2021-09-17"),
+    },
+    {
+        name: "Naveen S",
+        email: "naveen.driver@swachh.city",
+        password: "driver123",
+        phone: "9000000004",
+        gender: "Male",
+        licenseNumber: "DL-BLR-004-2026",
+        age: 29,
+        startDate: new Date("2024-02-22"),
+    },
+];
+
 async function seed() {
     if (!process.env.MONGO_URI) {
         throw new Error("MONGO_URI is missing in backend/.env");
@@ -212,6 +256,7 @@ async function seed() {
         Complaint.deleteMany({}),
         Bin.deleteMany({}),
         Truck.deleteMany({}),
+        Driver.deleteMany({}),
     ]);
 
     const seededUsers = [];
@@ -235,12 +280,41 @@ async function seed() {
         seededUsers.push(user);
     }
 
+    const seededDrivers = [];
+    for (const driverSeed of demoDrivers) {
+        const hashedPassword = await bcrypt.hash(driverSeed.password, 10);
+        const driver = await Driver.findOneAndUpdate(
+            { email: driverSeed.email },
+            {
+                name: driverSeed.name,
+                email: driverSeed.email,
+                password: hashedPassword,
+                phone: driverSeed.phone,
+                gender: driverSeed.gender,
+                licenseNumber: driverSeed.licenseNumber,
+                age: driverSeed.age,
+                startDate: driverSeed.startDate,
+            },
+            { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
+        );
+        seededDrivers.push(driver);
+    }
+
     const trucks = await Truck.insertMany(
         truckSeeds.map((truck, index) => ({
             ...truck,
+            driver: seededDrivers[index % seededDrivers.length]?._id,
             createdAt: new Date(now - (index + 1) * 60 * 60 * 1000),
             updatedAt: new Date(now - index * 45 * 60 * 1000),
         })),
+    );
+
+    await Promise.all(
+        seededDrivers.map((driver, index) =>
+            Driver.findByIdAndUpdate(driver._id, {
+                truck: trucks[index % trucks.length]._id,
+            }),
+        ),
     );
 
     const bins = await Bin.insertMany(
@@ -299,12 +373,18 @@ async function seed() {
 
     console.log("Seed completed successfully");
     console.log(`Users: ${seededUsers.length}`);
+    console.log(`Drivers: ${seededDrivers.length}`);
     console.log(`Bins: ${bins.length}`);
     console.log(`Trucks: ${trucks.length}`);
     console.log(`Complaints: ${complaintTemplates.length}`);
     console.log("Demo citizen login: citizen@swachh.city / user123");
     console.log("Additional citizens: asha@swachh.city, rohit@swachh.city, meera@swachh.city (password: user123)");
     console.log("Demo admin login: admin@swachh.city / admin123");
+    console.log("Driver logins (password: driver123):");
+    console.log("- manjunath.driver@swachh.city");
+    console.log("- shalini.driver@swachh.city");
+    console.log("- imran.driver@swachh.city");
+    console.log("- naveen.driver@swachh.city");
 
     await mongoose.disconnect();
 }
